@@ -1,200 +1,116 @@
-# profiles_map.yml — 25/28
-# Perfis para mapear cabeçalhos variados de CSV para um conjunto mínimo
-# de campos esperados pelo pipeline (loader/normalizer/matcher).
-# UTF-8. Pode manter acentuação. Regex são case-insensitive por padrão.
-#
-# Campos normalizados alvo (principais):
-#   Sucessor: data, debito, credito, part_d, part_c, doc, valor, historico, complemento, transacao_id
-#   Fontes (Entradas/Saídas/Serviços): data, doc, participante, valor, cfop, situacao, modelo, especie,
-#                                      condicao, debito_alias, credito_alias, chave_xml, fonte_tipo
-#   Fornecedores: codigo, nome, cnpj
-#   PlanoContas: codigo, alias, nome, natureza
-#   Bancário/Legado: data, docto, valor, historico, participante, debito_cod, credito_cod
-#
-version: 1
+﻿version: 1
 defaults:
   delimiter: ";"
   decimal: ","
   encoding: "utf-8"
-  date_formats: ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"]
-  # Extrai número/série de documento quando possível (aplicado a 'doc'/'historico')
-  doc_num_regex: "\b(?:NF|NFE|NFC?E|DCTO|FAT|DUP|PED)?\s*([0-9]{1,12})\b"
-  doc_serie_regex: "\b(?:NF|NFE|NFC?E)?\s*[0-9]{1,12}[\/-]([0-9]{1,4})\b"
+  date_formats: ["%d/%m/%Y", "%Y-%m-%d"]
+  doc_num_regex: "\\b(?:NF|NFE|CTE|DOC)?\\s*(\\d{1,12})\\b"
+  doc_serie_regex: "\\b(\\d{1,4})\\b"
 
 profiles:
-
-  # ============= SUCESSOR (lançamentos contábeis) =============
   - id: sucessor_v1
     source: SUCESSOR
     detect:
       required_any:
-        - "(?i)hist(ó|o)rico"
-        - "(?i)conta.*d[eé]bito"
-        - "(?i)conta.*cr[eé]dito"
-        - "(?i)valor"
+        - "(?i)data"
+        - "(?i)debito"
+        - "(?i)credito"
+        - "(?i)doc"
     csv:
       delimiter: ";"
       decimal: ","
-      encoding: "utf-8"
     map:
-      data: ["(?i)^(data|data\s*lanc(amento)?|dt\s*lcto)$"]
-      debito: ["(?i)^(conta\s*)?d[eé]bito(\s*c[oó]d(igo)?)?$", "(?i)^cod\.?\s*debito$"]
-      credito: ["(?i)^(conta\s*)?cr[eé]dito(\s*c[oó]d(igo)?)?$", "(?i)^cod\.?\s*credito$"]
-      part_d: ["(?i)^(participante|historico)\s*d(é|e)bito$", "(?i)^part\.?\s*d$"]
-      part_c: ["(?i)^(participante|historico)\s*cr(é|e)dito$", "(?i)^part\.?\s*c$"]
-      doc: ["(?i)^(n[ºo]\s*docto|n[uú]mero\s*do\s*documento|numero\s*docto|documento|docto)$"]
-      valor: ["(?i)^valor(\s*cont(á|a)bil)?$"]
-      historico: ["(?i)^hist(ó|o)rico(\s*complemento)?$", "(?i)^complemento$"]
-      complemento: ["(?i)^complemento$"]
-      transacao_id: ["(?i)^(transa(c|ç)[aã]o|id\s*lan(c|ç)amento|seq\.?|c[óo]d\.?\s*lan(c|ç))$"]
-    normalize:
-      participante_from: ["part_d","part_c"]   # para enriquecer tokens
-      doc_from: ["doc","historico"]
+      data: ["(?i)^data"]
+      debito: ["(?i)debito"]
+      credito: ["(?i)credito"]
+      part_d: ["(?i)part.*deb"]
+      part_c: ["(?i)part.*cred"]
+      doc: ["(?i)doc"]
+      valor: ["(?i)valor"]
+      historico: ["(?i)hist"]
+      transacao_id: ["(?i)trans"]
 
-  # ============= SUPREMA — ENTRADAS =============
   - id: suprema_entradas_v1
     source: SUPREMA_ENTRADA
     detect:
       required_any:
-        - "(?i)^cfop$"
         - "(?i)fornecedor"
-        - "(?i)valor\s*cont(á|a)bil"
-    csv: { delimiter: ";", decimal: ",", encoding: "utf-8" }
+        - "(?i)cfop"
+        - "(?i)valor"
     map:
-      data: ["(?i)^(data\s*entrada|dt\s*entrada|data\s*emiss(ã|a)o|dt\s*emiss(ã|a)o)$"]
-      doc: ["(?i)^(documento|n[ºo]\s*docto|n[uú]mero\s*do\s*documento|nf\s*numero)$"]
-      participante: ["(?i)^(fornecedor(\s*c[oó]digo)?|c[oó]d\.?\s*fornecedor|nome\s*fornecedor)$"]
-      valor: ["(?i)^(valor\s*cont(á|a)bil|valor\s*doc(umento)?)$"]
-      cfop: ["(?i)^cfop$"]
-      modelo: ["(?i)^modelo$"]
-      especie: ["(?i)^esp(é|e)cie$"]
-      condicao: ["(?i)^condi[cç][aã]o(\s*pagamento)?$"]
-      debito_alias: ["(?i)^(d[ée]bito\s*alias|debito\s*contabil|conta\s*d[ée]bito\s*alias)$"]
-      credito_alias: ["(?i)^(cr[ée]dito\s*alias|credito\s*contabil|conta\s*cr[ée]dito\s*alias)$"]
-      chave_xml: ["(?i)^(chave|chave\s*(nfe|cte|nfce|bpe)|chave\s*xml)$"]
-      situacao: ["(?i)^situa[cç][aã]o$"]
+      data: ["(?i)data"]
+      doc: ["(?i)doc"]
+      participante: ["(?i)fornecedor|participante"]
+      valor: ["(?i)valor"]
+      cfop: ["(?i)cfop"]
+      modelo: ["(?i)modelo"]
+      situacao: ["(?i)situacao"]
+      debito_alias: ["(?i)debito"]
+      credito_alias: ["(?i)credito"]
+      condicao: ["(?i)condicao"]
+      chave_xml: ["(?i)chave"]
     fixed:
-      fonte_tipo: "ENTRADA"
+      fonte_tipo: ENTRADA
 
-  # ============= SUPREMA — SAÍDAS =============
   - id: suprema_saidas_v1
     source: SUPREMA_SAIDA
     detect:
       required_any:
-        - "(?i)^cfop$"
         - "(?i)cliente"
-        - "(?i)valor\s*cont(á|a)bil"
-    csv: { delimiter: ";", decimal: ",", encoding: "utf-8" }
+        - "(?i)cfop"
+        - "(?i)valor"
     map:
-      data: ["(?i)^(data\s*sa[ií]da|dt\s*sa[ií]da|data\s*emiss(ã|a)o|dt\s*emiss(ã|a)o)$"]
-      doc: ["(?i)^(documento|n[ºo]\s*docto|n[uú]mero\s*do\s*documento|nf\s*numero)$"]
-      participante: ["(?i)^(cliente(\s*c[oó]digo)?|c[oó]d\.?\s*cliente|nome\s*cliente)$"]
-      valor: ["(?i)^(valor\s*cont(á|a)bil|valor\s*doc(umento)?)$"]
-      cfop: ["(?i)^cfop$"]
-      modelo: ["(?i)^modelo$"]
-      especie: ["(?i)^esp(é|e)cie$"]
-      condicao: ["(?i)^condi[cç][aã]o(\s*pagamento)?$"]
-      debito_alias: ["(?i)^(d[ée]bito\s*alias|debito\s*contabil|conta\s*d[ée]bito\s*alias)$"]
-      credito_alias: ["(?i)^(cr[ée]dito\s*alias|credito\s*contabil|conta\s*cr[ée]dito\s*alias)$"]
-      chave_xml: ["(?i)^(chave|chave\s*(nfe|cte|nfce|bpe)|chave\s*xml)$"]
-      situacao: ["(?i)^situa[cç][aã]o$"]
-    fixed: { fonte_tipo: "SAIDA" }
+      data: ["(?i)data"]
+      doc: ["(?i)doc"]
+      participante: ["(?i)cliente|participante"]
+      valor: ["(?i)valor"]
+      cfop: ["(?i)cfop"]
+      modelo: ["(?i)modelo"]
+      situacao: ["(?i)situacao"]
+      debito_alias: ["(?i)debito"]
+      credito_alias: ["(?i)credito"]
+      condicao: ["(?i)condicao"]
+      chave_xml: ["(?i)chave"]
+    fixed:
+      fonte_tipo: SAIDA
 
-  # ============= SUPREMA — SERVIÇOS =============
   - id: suprema_servicos_v1
     source: SUPREMA_SERVICO
     detect:
       required_any:
-        - "(?i)servi[cç]os?"
-        - "(?i)valor\s*servi[cç]o"
-        - "(?i)^cfop$|(?i)^cst$|(?i)^iss$"
-    csv: { delimiter: ";", decimal: ",", encoding: "utf-8" }
+        - "(?i)serv"
+        - "(?i)valor"
     map:
-      data: ["(?i)^(data\s*entrada|data\s*emiss(ã|a)o|dt\s*emiss(ã|a)o)$"]
-      doc: ["(?i)^(documento|n[ºo]\s*docto|n[uú]mero\s*do\s*documento|rps)$"]
-      participante: ["(?i)^(tomador|prestador|cliente|fornecedor|nome\s*(tomador|prestador))$"]
-      valor: ["(?i)^(valor\s*servi[cç]o|valor\s*nota|valor\s*doc(umento)?)$"]
-      cfop: ["(?i)^cfop$"]
-      situacao: ["(?i)^situa[cç][aã]o$"]
-      debito_alias: ["(?i)^(d[ée]bito\s*alias|debito\s*contabil)$"]
-      credito_alias: ["(?i)^(cr[ée]dito\s*alias|credito\s*contabil)$"]
-    fixed: { fonte_tipo: "SERVICO" }
-
-  # ============= PRACTICE (layout comum) =============
-  - id: practice_v1
-    source: PRACTICE
-    detect:
-      required_any:
-        - "(?i)practice"
-        - "(?i)^cfop$|(?i)documento"
-    csv: { delimiter: ";", decimal: ",", encoding: "utf-8" }
-    map:
-      data: ["(?i)^data$","(?i)^emiss(ã|a)o$"]
-      doc: ["(?i)^(documento|n[ºo]\s*docto)$"]
-      participante: ["(?i)^(fornecedor|cliente|parceiro|participante)$"]
-      valor: ["(?i)^valor(\s*total|\s*cont(á|a)bil)?$"]
-      cfop: ["(?i)^cfop$"]
-      situacao: ["(?i)^situa[cç][aã]o$"]
+      data: ["(?i)data"]
+      doc: ["(?i)doc|rps"]
+      participante: ["(?i)tomador|fornecedor|cliente|participante"]
+      valor: ["(?i)valor"]
+      cfop: ["(?i)cfop"]
+      situacao: ["(?i)situacao"]
       debito_alias: ["(?i)debito"]
       credito_alias: ["(?i)credito"]
+    fixed:
+      fonte_tipo: SERVICO
 
-  # ============= MISTER CONTADOR (layout comum) =============
-  - id: mister_contador_v1
-    source: MISTER_CONTADOR
-    detect:
-      required_any:
-        - "(?i)mister\s*contador"
-        - "(?i)duplicata|boleto|nf"
-    csv: { delimiter: ";", decimal: ",", encoding: "utf-8" }
-    map:
-      data: ["(?i)^data$","(?i)^emiss(ã|a)o$"]
-      doc: ["(?i)^(documento|n[ºo]\s*docto|nf)$"]
-      participante: ["(?i)^(fornecedor|cliente|raza(o|õ)\s*social|participante)$"]
-      valor: ["(?i)^valor(\s*doc(umento)?)?$"]
-      cfop: ["(?i)^cfop$"]
-      situacao: ["(?i)^situa[cç][aã]o$"]
-
-  # ============= FORNECEDORES (auxiliar) =============
   - id: fornecedores_v1
     source: FORNECEDORES
     detect:
       required_any:
         - "(?i)fornecedor"
         - "(?i)cnpj"
-    csv: { delimiter: ";", decimal: ",", encoding: "utf-8" }
     map:
-      codigo: ["(?i)^(c[oó]digo|cod|id)$"]
-      nome: ["(?i)^(nome|raz(ã|a)o\s*social)$"]
-      cnpj: ["(?i)^cnpj$"]
+      codigo: ["(?i)cod"]
+      nome: ["(?i)nome|razao"]
+      cnpj: ["(?i)cnpj"]
 
-  # ============= PLANO DE CONTAS (auxiliar) =============
   - id: plano_contas_v1
     source: PLANO_CONTAS
     detect:
       required_any:
-        - "(?i)plano\s*de\s*contas"
-        - "(?i)conta|c[oó]digo"
-    csv: { delimiter: ";", decimal: ",", encoding: "utf-8" }
+        - "(?i)plano"
+        - "(?i)conta"
     map:
-      codigo: ["(?i)^(conta|c[oó]digo|cod)$"]
-      alias: ["(?i)^(alias|apelido|reduzido|sint[ée]tico)$"]
-      nome: ["(?i)^(descri[cç][aã]o|nome)$"]
-      natureza: ["(?i)^(natureza|tipo|d/c)$"]
-
-  # ============= BANCÁRIO/LEGADO (linhas de extrato/histórico) =============
-  - id: legacy_bank_v1
-    source: LEGACY_BANK
-    detect:
-      required_any:
-        - "(?i)historico|descri[cç][aã]o"
-        - "(?i)valor"
-        - "(?i)data"
-    csv: { delimiter: ";", decimal: ",", encoding: "utf-8" }
-    map:
-      data: ["(?i)^data$"]
-      docto: ["(?i)^(docto|documento|n(º|o)\s*doc)$"]
-      valor: ["(?i)^valor$"]
-      historico: ["(?i)^(hist(ó|o)rico|descri[cç][aã]o)$"]
-      participante: ["(?i)^(favorecido|contrapart(e|i)|cliente|fornecedor|raza(o|õ)\s*social)$"]
-      debito_cod: ["(?i)^conta\s*d[ée]bito$"]
-      credito_cod: ["(?i)^conta\s*cr[ée]dito$"]
+      codigo: ["(?i)cod|conta"]
+      alias: ["(?i)alias|apelido|reduzido"]
+      nome: ["(?i)nome|descricao"]
+      natureza: ["(?i)natureza|tipo"]

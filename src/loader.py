@@ -1,170 +1,334 @@
-# loader.py — 12/28
-# CSV Loader robusto (MVP local)
-# - Detecta encoding e delimitador
-# - Lê como texto (sem coerção), preserva cabeçalhos
-# - Valida cabeçalhos contra profile_*.json (opcional)
-# - Exporta CSV padronizado (UTF-8 + vírgula)
-# - (Opcional) Ingestão em SQLite (colunas TEXT)
-from __future__ import annotations
-import csv as _csv
+﻿from __future__ import annotations
+
+import argparse
+import csv
 import json
+import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
-try:
-    import pandas as pd
-except Exception:
-    pd = None  # type: ignore
+import pandas as pd
+import yaml
 
-import sqlite3
+# ---------------------------------------------------------------------------
+# Configuration models
+# ---------------------------------------------------------------------------
 
-ENCODING_CANDIDATES = ["utf-8-sig", "utf-8", "cp1252", "latin1"]
-DELIMITER_CANDIDATES = [";", ",", "\t", "|"]
+@dataclass
+class ProfileDetection:
+    required_any: List[str] = field(default_factory=list)
 
-def sniff_encoding(path: str, candidates: List[str] = ENCODING_CANDIDATES) -> str:
-    for enc in candidates:
+    @classmethod
+    def from_dict(cls, data: Dict[str, object]) -> "ProfileDetection":
+        required_any = [str(item) for item in data.get("required_any", [])]
+        return cls(required_any=required_any)
+
+
+@dataclass
+class ProfileConfig:
+    profile_id: str
+    source: str
+    detect: ProfileDetection
+    csv_opts: Dict[str, str]
+    column_map: Dict[str, List[str]]
+    fixed: Dict[str, str]
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, object]) -> "ProfileConfig":
+        profile_id = str(data.get("id"))
+        source = str(data.get("source"))
+        detect = ProfileDetection.from_dict(data.get("detect", {}))
+        csv_opts = {k: str(v) for k, v in (data.get("csv") or {}).items()}
+        column_map = {
+            str(target): [str(pattern) for pattern in patterns or []]
+            for target, patterns in (data.get("map") or {}).items()
+        }
+        fixed = {str(k): str(v) for k, v in (data.get("fixed") or {}).items()}
+        return cls(
+            profile_id=profile_id,
+            source=source,
+            detect=detect,
+            csv_opts=csv_opts,
+            column_map=column_map,
+            fixed=fixed,
+        )
+
+
+@dataclass
+class ProfilesMap:
+    defaults: Dict[str, str]
+    profiles: List[ProfileConfig]
+
+    @classmethod
+    def load(cls, path: Path) -> "ProfilesMap":
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        defaults = {str(k): str(v) for k, v in (data.get("defaults") or {}).items()}
+        profiles_raw = data.get("profiles") or []
+        profiles = [ProfileConfig.from_dict(item) for item in profiles_raw]
+        if not profiles:
+            raise ValueError("profiles_map.yml contains no profile entries")
+        return cls(defaults=defaults, profiles=profiles)
+
+
+# ---------------------------------------------------------------------------
+# Loader implementation
+# ---------------------------------------------------------------------------
+
+def _normalise_header(header: str) -> str:
+    return re.sub(r"\s+", " ", header.strip())
+
+
+def _build_header_list(path: Path, delimiter: str, encoding: str) -> List[str]:
+    with path.open("r", encoding=encoding, errors="ignore", newline="") as handle:
+        reader = csv.reader(handle, delimiter=delimiter)
         try:
-            with open(path, "r", encoding=enc) as f:
-                f.read(4096)
-            return enc
-        except Exception:
+            header = next(reader)
+        except StopIteration:
+            return []
+    return [_normalise_header(col) for col in header]
+
+
+def _score_profile(profile: ProfileConfig, headers: Iterable[str]) -> Tuple[int, List[str]]:
+    matches: List[str] = []
+    hits = 0
+    total = max(len(profile.detect.required_any), 1)
+    for pattern in profile.detect.required_any:
+        rx = re.compile(pattern, re.IGNORECASE)
+        for column in headers:
+            if rx.search(column):
+                matches.append(column)
+                hits += 1
+                break
+    score = hits / total
+    return score, matches
+
+
+def detect_profile(path: Path, profiles_map: ProfilesMap) -> Tuple[Optional[ProfileConfig], Dict[str, object]]:
+    delimiter = profiles_map.defaults.get("delimiter", ";")
+    encoding = profiles_map.defaults.get("encoding", "utf-8")
+    headers = _build_header_list(path, delimiter=delimiter, encoding=encoding)
+    if not headers:
+        return None, {"headers": [], "reason": "empty file"}
+
+    best: Optional[ProfileConfig] = None
+    best_score = -(10 ** 9)
+    best_matches: List[str] = []
+    filename = path.name.lower()
+    hints = {
+        "sucessor": "SUCESSOR",
+        "entradas": "SUPREMA_ENTRADA",
+        "saidas": "SUPREMA_SAIDA",
+        "servico": "SUPREMA_SERVICO",
+        "fornecedor": "FORNECEDORES",
+        "plano": "PLANO_CONTAS",
+    }
+
+    for profile in profiles_map.profiles:
+        delim = profile.csv_opts.get("delimiter", delimiter)
+        enc = profile.csv_opts.get("encoding", encoding)
+        header_list = _build_header_list(path, delimiter=delim, encoding=enc)
+        if not header_list:
             continue
-    return "utf-8"
+        score, matches = _score_profile(profile, header_list)
+        for hint, source in hints.items():
+            if hint in filename:
+                if profile.source == source:
+                    score += 0.2
+                else:
+                    score -= 0.1
+        if score > best_score:
+            best_score = score
+            best = profile
+            best_matches = matches
 
-def sniff_delimiter(path: str, encoding: str) -> Tuple[str, str, bool]:
-    with open(path, "r", encoding=encoding, errors="replace") as f:
-        sample = f.read(65536)
+    details = {
+        "headers": headers,
+        "score": best_score,
+        "matches": best_matches,
+    }
+    return best, details
+
+
+def _read_csv(path: Path, profile: ProfileConfig, defaults: Dict[str, str]) -> pd.DataFrame:
+    delimiter = profile.csv_opts.get("delimiter") or defaults.get("delimiter") or ";"
+    encoding = profile.csv_opts.get("encoding") or defaults.get("encoding") or "utf-8"
+    decimal = profile.csv_opts.get("decimal") or defaults.get("decimal") or ","
     try:
-        dialect = _csv.Sniffer().sniff(sample, delimiters=";,|\t")
-        has_header = _csv.Sniffer().has_header(sample)
-        return dialect.delimiter, (dialect.quotechar or '"'), has_header
-    except Exception:
-        # Heurística simples
-        best_delim = max(DELIMITER_CANDIDATES, key=lambda d: sample.count(d))
-        return best_delim, '"', True
+        df = pd.read_csv(
+            path,
+            dtype=str,
+            keep_default_na=False,
+            encoding=encoding,
+            sep=delimiter,
+            engine="python",
+        )
+    except UnicodeDecodeError:
+        df = pd.read_csv(
+            path,
+            dtype=str,
+            keep_default_na=False,
+            encoding="latin1",
+            sep=delimiter,
+            engine="python",
+        )
+    df.columns = [_normalise_header(col) for col in df.columns]
+    if decimal != ".":
+        # keep raw values as text; decimal handling happens in normaliser
+        pass
+    return df
 
-def read_csv_smart(path: str,
-                   encoding: Optional[str] = None,
-                   delimiter: Optional[str] = None,
-                   quotechar: Optional[str] = None,
-                   has_header: Optional[bool] = None):
-    assert pd is not None, "pandas é necessário para o loader"
-    enc = encoding or sniff_encoding(path)
-    if delimiter is None:
-        delim, quote, header = sniff_delimiter(path, enc)
+
+def _map_columns(df: pd.DataFrame, profile: ProfileConfig) -> Tuple[pd.DataFrame, Dict[str, Optional[str]]]:
+    result = pd.DataFrame()
+    mapping: Dict[str, Optional[str]] = {}
+    used_columns: set[str] = set()
+    for target, patterns in profile.column_map.items():
+        matched_column: Optional[str] = None
+        for pattern in patterns:
+            rx = re.compile(pattern, re.IGNORECASE)
+            for column in df.columns:
+                if column in used_columns:
+                    continue
+                if rx.search(column):
+                    matched_column = column
+                    break
+            if matched_column:
+                break
+        if matched_column:
+            result[target] = df[matched_column]
+            used_columns.add(matched_column)
+        else:
+            result[target] = ""
+        mapping[target] = matched_column
+    for key, value in profile.fixed.items():
+        result[key] = value
+        mapping[key] = f"<fixed:{value}>"
+    result["profile_id"] = profile.profile_id
+    result["source"] = profile.source
+    return result, mapping
+
+
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def write_csv(df: pd.DataFrame, path: Path) -> None:
+    ensure_dir(path.parent)
+    df.to_csv(path, index=False, encoding="utf-8")
+
+
+def write_log(log_path: Path, record: Dict[str, object]) -> None:
+    ensure_dir(log_path.parent)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+OUTPUT_NAME_MAP: Dict[str, str] = {
+    "SUCESSOR": "sucessor.csv",
+    "SUPREMA_ENTRADA": "suprema_entradas.csv",
+    "SUPREMA_SAIDA": "suprema_saidas.csv",
+    "SUPREMA_SERVICO": "suprema_servicos.csv",
+    "PRACTICE": "practice.csv",
+    "MISTER_CONTADOR": "mister_contador.csv",
+    "FORNECEDORES": "fornecedores.csv",
+    "PLANO_CONTAS": "plano_contas.csv",
+    "LEGACY_BANK": "legacy_bank.csv",
+}
+
+
+def process_file(
+    csv_path: Path,
+    profiles_map: ProfilesMap,
+    staging_dir: Path,
+    log_path: Path,
+    dry_run: bool = False,
+) -> Dict[str, object]:
+    profile, details = detect_profile(csv_path, profiles_map)
+    record: Dict[str, object] = {
+        "input": str(csv_path),
+        "detected_profile": profile.profile_id if profile else None,
+        "source": profile.source if profile else None,
+        "details": details,
+        "rows": 0,
+        "out": None,
+    }
+    if profile is None:
+        record["status"] = "skipped"
+        write_log(log_path, record)
+        return record
+
+    df_raw = _read_csv(csv_path, profile, profiles_map.defaults)
+    mapped_df, mapping = _map_columns(df_raw, profile)
+    record["mapping"] = mapping
+    record["rows"] = int(len(mapped_df))
+
+    output_name = OUTPUT_NAME_MAP.get(profile.source, f"{profile.source.lower()}.csv")
+    output_path = staging_dir / output_name
+    record["out"] = str(output_path)
+    if not dry_run:
+        write_csv(mapped_df, output_path)
+        record["status"] = "written"
     else:
-        delim, quote, header = delimiter, (quotechar or '"'), True if has_header is None else has_header
-    df = pd.read_csv(
-        path,
-        dtype=str,
-        keep_default_na=False,
-        na_values=[""],
-        encoding=enc,
-        sep=delim,
-        quotechar=quote,
-        header=0 if header else None,
-        engine="python",
-        on_bad_lines="skip",
-    )
-    return df, {"encoding": enc, "delimiter": delim, "quotechar": quote, "has_header": header}
+        record["status"] = "dry-run"
 
-def load_profile(profile_path: Optional[str]) -> Optional[Dict]:
-    if not profile_path:
-        return None
-    return json.loads(Path(profile_path).read_text(encoding="utf-8"))
+    write_log(log_path, record)
+    return record
 
-def canonicalize_headers(cols: List[str]) -> List[str]:
-    def _norm(c: str) -> str:
-        c = str(c).strip()
-        c = " ".join(c.split())
-        return c
-    return [_norm(c) for c in cols]
 
-def validate_against_profile(df, profile: Dict) -> Dict[str, List[str]]:
-    canon = set(profile.get("canonical_columns", []))
-    present = set(df.columns)
-    missing = [c for c in canon if c not in present]
-    extras = [c for c in df.columns if c not in canon]
-    return {"missing": missing, "extras": extras}
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
-def write_csv_utf8(df, out_path: str) -> None:
-    df.to_csv(out_path, index=False, encoding="utf-8")
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="CSV loader that normalises headers using profiles_map.yml")
+    parser.add_argument("--inputs", nargs="+", required=True, help="List of CSV files under dados/")
+    parser.add_argument("--profiles", required=True, help="Path to profiles_map.yml")
+    parser.add_argument("--staging", required=True, help="Directory for staging outputs")
+    parser.add_argument("--log", default="out/logs/loader.jsonl", help="Path to append JSONL logs")
+    parser.add_argument("--dry-run", action="store_true", help="Enable detection only, no files are written")
+    return parser.parse_args(argv)
 
-def ensure_sqlite_table(conn: sqlite3.Connection, table: str, columns: List[str], replace: bool = False):
-    cur = conn.cursor()
-    if replace:
-        cur.execute(f'DROP TABLE IF EXISTS "{table}"')
-    cols_sql = ", ".join([f'"{c}" TEXT' for c in columns])
-    cur.execute(f'CREATE TABLE IF NOT EXISTS "{table}" ({cols_sql})')
-    conn.commit()
 
-def insert_sqlite_bulk(conn: sqlite3.Connection, table: str, df) -> int:
-    cur = conn.cursor()
-    cols = list(df.columns)
-    placeholders = ", ".join(["?"] * len(cols))
-    col_list = ", ".join([f'"{c}"' for c in cols])
-    rows = []
-    for _, row in df.iterrows():
-        rows.append(tuple(None if (v == "" or str(v).lower() == "nan") else str(v) for v in row.tolist()))
-    cur.executemany(f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders})', rows)
-    conn.commit()
-    return len(rows)
+def main(argv: Optional[List[str]] = None) -> int:
+    args = parse_args(argv)
+    staging_dir = Path(args.staging)
+    profiles_path = Path(args.profiles)
+    log_path = Path(args.log)
 
-def main(argv: List[str]) -> int:
-    import argparse
-    p = argparse.ArgumentParser(description="Loader — leitura robusta de CSV (UTF-8 + separador canônico)")
-    p.add_argument("--in", dest="inp", required=True, help="Caminho do CSV de entrada")
-    p.add_argument("--profile", dest="profile", help="(Opcional) profile_*.json para validar cabeçalhos")
-    p.add_argument("--out-csv", dest="out_csv", required=True, help="Saída CSV padronizada (UTF-8, separador ',')")
-    p.add_argument("--encoding", dest="encoding")
-    p.add_argument("--delimiter", dest="delimiter")
-    p.add_argument("--quotechar", dest="quotechar")
-    p.add_argument("--no-header", dest="no_header", action="store_true")
-    p.add_argument("--db-sqlite", dest="db_sqlite", help="(Opcional) caminho .db para inserir dados")
-    p.add_argument("--table", dest="table", help="(Opcional) nome da tabela destino")
-    p.add_argument("--replace", dest="replace", action="store_true", help="DROP + CREATE tabela antes de inserir")
-    args = p.parse_args(argv)
-
-    if pd is None:
-        sys.stderr.write("ERRO: pandas não disponível. Instale pandas.\n")
+    if not profiles_path.exists():
+        sys.stderr.write(f"profiles file not found: {profiles_path}\n")
         return 2
 
-    df, meta = read_csv_smart(
-        args.inp,
-        encoding=args.encoding,
-        delimiter=args.delimiter,
-        quotechar=args.quotechar,
-        has_header=False if args.no_header else None,
-    )
+    profiles_map = ProfilesMap.load(profiles_path)
+    results = []
+    for item in args.inputs:
+        csv_path = Path(item)
+        if not csv_path.exists():
+            record = {
+                "input": str(csv_path),
+                "status": "missing",
+            }
+            write_log(log_path, record)
+            results.append(record)
+            continue
+        record = process_file(csv_path, profiles_map, staging_dir, log_path, dry_run=args.dry_run)
+        results.append(record)
 
-    df.columns = canonicalize_headers(list(df.columns))
-
-    profiling_report = {}
-    prof = load_profile(args.profile) if args.profile else None
-    if prof:
-        profiling_report = validate_against_profile(df, prof)
-
-    write_csv_utf8(df, args.out_csv)
-
-    if args.db_sqlite and args.table:
-        conn = sqlite3.connect(args.db_sqlite)
-        try:
-            ensure_sqlite_table(conn, args.table, list(df.columns), replace=args.replace)
-            n = insert_sqlite_bulk(conn, args.table, df)
-        finally:
-            conn.close()
-    else:
-        n = len(df)
-
-    sys.stdout.write(json.dumps({
-        "input": args.inp,
-        "detected": meta,
-        "rows": int(n),
-        "out_csv": args.out_csv,
-        "profile_check": profiling_report
-    }, ensure_ascii=False, indent=2) + "\n")
+    summary = {
+        "processed": len(results),
+        "written": sum(1 for r in results if r.get("status") == "written"),
+        "skipped": sum(1 for r in results if r.get("status") == "skipped"),
+        "dry_run": sum(1 for r in results if r.get("status") == "dry-run"),
+        "missing": sum(1 for r in results if r.get("status") == "missing"),
+    }
+    sys.stdout.write(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
     return 0
 
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())
+
+
+

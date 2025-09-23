@@ -1,512 +1,444 @@
-# normalizer.py — 13/28
-# Aplica profiles JSON (profile_*.json) a DataFrames:
-# - renomeações, datas (BR→ISO), números (vírgula), documento (num/série),
-# - participante (upper/sem acento), CFOP, situação,
-# - campos derivados simples e validações,
-# - mapeamento para tabela de staging.
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-import json, re, sys, unicodedata
+﻿from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
 
-try:
-    import pandas as pd  # preferido
-except Exception:
-    pd = None  # type: ignore
+import pandas as pd
+import yaml
 
-try:
-    import polars as pl  # opcional
-except Exception:
-    pl = None  # type: ignore
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-__all__ = ["load_profile", "Normalizer", "digits", "strip_accents"]
 
-# ---------------- Utils ----------------
-def strip_accents(s: str) -> str:
-    if s is None:
-        return s
-    return "".join(c for c in unicodedata.normalize("NFD", str(s)) if unicodedata.category(c) != "Mn")
-
-def to_upper(s: Any) -> Any:
-    return None if s is None else str(s).upper()
-
-def collapse_spaces(s: Optional[str]) -> Optional[str]:
-    if s is None: return s
-    return re.sub(r"\s+", " ", str(s)).strip()
-
-def digits(s: Any, expect_len: Optional[int] = None) -> Optional[str]:
-    if s is None: return None
-    ds = re.sub(r"\D", "", str(s))
-    if expect_len is not None and len(ds) != expect_len:
+def strip_accents(text: Optional[str]) -> Optional[str]:
+    if text is None:
         return None
-    return ds or None
+    import unicodedata
 
-def lstrip_zeros(s: Any) -> Optional[str]:
-    if s is None: return None
-    out = str(s).lstrip("0")
-    return out if out != "" else "0"
+    normalized = unicodedata.normalize("NFD", str(text))
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
 
-def parse_date_any(s: Any, fmts: List[str]) -> Optional[str]:
-    if s is None: return None
-    txt = str(s).strip()
-    if txt == "": return None
-    for fmt in fmts:
+
+def normalise_space(text: Optional[str]) -> Optional[str]:
+    if text is None:
+        return None
+    new_value = re.sub(r"\s+", " ", str(text)).strip()
+    return new_value or None
+
+
+def safe_upper(text: Optional[str]) -> Optional[str]:
+    value = normalise_space(text)
+    return value.upper() if value else None
+
+
+def abs_or_none(value: Optional[float]) -> Optional[float]:
+    return abs(value) if value is not None else None
+
+
+def parse_decimal(text: Optional[str], decimal: str = ",") -> Optional[float]:
+    if text is None:
+        return None
+    raw = str(text).strip()
+    if not raw:
+        return None
+    raw = raw.replace(" ", "")
+    if decimal == ",":
+        raw = raw.replace(".", "").replace(",", ".")
+    else:
+        raw = raw.replace(",", "")
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", raw)
+    if not match:
+        return None
+    try:
+        value = float(match.group(0))
+    except ValueError:
+        return None
+    if "(" in raw and ")" in raw:
+        value = -abs(value)
+    return value
+
+
+def parse_date(text: Optional[str], formats: Iterable[str]) -> Optional[datetime]:
+    if text is None:
+        return None
+    raw = str(text).strip()
+    if not raw:
+        return None
+    for fmt in formats:
         try:
-            dt = datetime.strptime(txt, fmt)
-            return dt.strftime("%Y-%m-%d")
-        except Exception:
-            pass
-    return None
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    try:
+        from dateutil import parser as dateutil_parser
 
-def parse_number_br(
-    s: Any,
-    remove_thousands: bool = True,
-    decimal_comma: bool = True,
-    fallback_decimal_point: bool = True,
-    allow_parentheses_negative: bool = True,
-    round_places: Optional[int] = 2,
-    percent_like: bool = False,
-) -> Optional[float]:
-    if s is None: return None
-    txt = str(s).strip()
-    if txt == "": return None
-    neg = False
-    if allow_parentheses_negative and txt.startswith("(") and txt.endswith(")"):
-        neg = True; txt = txt[1:-1]
-    if remove_thousands:
-        txt = txt.replace(".", "").replace(" ", "")
-    if decimal_comma and "," in txt:
-        txt = txt.replace(",", ".")
-    m = re.search(r"[-+]?\d+(?:\.\d+)?", txt)
-    if not m: return None
-    val = float(m.group(0))
-    if percent_like and "%" in str(s):
-        val = val / 100.0
-    if neg: val = -val
-    if round_places is not None: val = round(val, round_places)
-    return val
+        return dateutil_parser.parse(raw, dayfirst=True)
+    except Exception:
+        return None
 
-def coalesce(*values):
-    for v in values:
-        if v is not None and v != "":
-            return v
-    return None
 
-def substr(s: Optional[str], start1: int, length: int) -> Optional[str]:
-    if s is None: return None
-    i0 = max(start1 - 1, 0)
-    return s[i0 : i0 + length]
+def to_iso(dt: Optional[datetime]) -> Optional[str]:
+    return dt.strftime("%Y-%m-%d") if dt else None
 
-def safe_bool(val) -> bool:
-    return str(val).strip().lower() in ("1","true","t","yes","y","sim")
 
-# ------------- Profile Loader -------------
-def load_profile(path: str) -> Dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+def to_month(dt: Optional[datetime]) -> Optional[str]:
+    return dt.strftime("%Y-%m") if dt else None
 
-# ------------- Normalizer -------------
-class Normalizer:
-    """Aplica um profile_* a pandas (padrão) ou polars, produzindo df normalizado e df de staging."""
-    def __init__(self, backend: str = "pandas"):
-        if backend not in ("pandas","polars","auto"):
-            raise ValueError("backend must be 'pandas', 'polars' or 'auto'")
-        if backend == "auto":
-            backend = "pandas" if pd is not None else "polars"
-        self.backend = backend
-        if self.backend == "pandas" and pd is None:
-            raise RuntimeError("pandas é requerido para 'pandas'")
-        if self.backend == "polars" and pl is None:
-            raise RuntimeError("polars é requerido para 'polars'")
 
-    # ---- helpers ----
-    def _df_from_any(self, data):
-        if self.backend == "pandas":
-            if isinstance(data, pd.DataFrame): return data.copy()
-            raise TypeError("Esperado pandas.DataFrame")
-        else:
-            if isinstance(data, pl.DataFrame): return data.clone()
-            raise TypeError("Esperado polars.DataFrame")
+def extract_first(pattern: re.Pattern, text: Optional[str]) -> Optional[str]:
+    if text is None:
+        return None
+    match = pattern.search(str(text))
+    if not match:
+        return None
+    groups = match.groups()
+    if groups:
+        for item in groups:
+            if item:
+                return re.sub(r"\D", "", str(item)) or None
+    return re.sub(r"\D", "", match.group(0)) or None
 
-    def _ensure_columns(self, df, cols: List[str]):
-        for c in cols:
-            if c not in df.columns:
-                if self.backend == "pandas":
-                    df[c] = None
-                else:
-                    df = df.with_columns(pl.lit(None).alias(c))
-        return df
 
-    def _apply_renames(self, cols: List[str], profile: Dict[str, Any]) -> Tuple[List[str], Dict[str,str], List[str]]:
-        rules = profile.get("rename_rules", [])
-        compiled = [(re.compile(r["pattern"]), r["to"]) for r in rules]
-        new_cols, mapping = [], {}
-        warnings = []
-        for c in cols:
-            c_new = c
-            for rx, dest in compiled:
-                if rx.search(c):
-                    c_new = dest; break
-            new_cols.append(c_new); mapping[c] = c_new
-        if profile.get("profiling", {}).get("warn_on_unknown_columns", False):
-            known = set(profile.get("canonical_columns", []))
-            for c in new_cols:
-                if c not in known and c not in ("data_iso","valor_num","doc_num_norm","doc_serie_norm"):
-                    warnings.append(f"Coluna '{c}' não é canônica no profile '{profile.get('profile_name')}'.")
-        return new_cols, mapping, warnings
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
 
-    # ---- parse blocks ----
-    def _apply_parse_blocks(self, df, profile: Dict[str, Any]):
-        rules = profile.get("parse_rules", {})
 
-        # Dates
-        date_list = []
-        if rules.get("date"): date_list.append(rules["date"])
-        date_list += rules.get("dates", [])
-        for dr in date_list:
-            inf, outf = dr.get("input_field"), dr.get("output_field")
-            fmts = dr.get("formats", [])
-            if self.backend == "pandas":
-                df[outf] = df[inf].apply(lambda x: parse_date_any(x, fmts))
-            else:
-                df = df.with_columns(pl.col(inf).map_elements(lambda x: parse_date_any(x, fmts)).alias(outf))
+def write_jsonl(path: Path, payload: Dict[str, object]) -> None:
+    ensure_dir(path.parent)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
-        # Numbers
-        num_list = []
-        if rules.get("number"): num_list.append(rules["number"])
-        num_list += rules.get("numbers", [])
-        for nr in num_list:
-            inf, outf = nr.get("input_field"), nr.get("output_field")
-            opts = {
-                "remove_thousands": nr.get("remove_thousands", True),
-                "decimal_comma": nr.get("decimal_comma", True),
-                "fallback_decimal_point": nr.get("fallback_decimal_point", True),
-                "allow_parentheses_negative": nr.get("allow_parentheses_negative", True),
-                "round_places": nr.get("round_places", 2),
-                "percent_like": nr.get("percent_like", False),
-            }
-            if self.backend == "pandas":
-                df[outf] = df[inf].apply(lambda x: parse_number_br(x, **opts))
-            else:
-                df = df.with_columns(pl.col(inf).map_elements(lambda x: parse_number_br(x, **opts)).alias(outf))
 
-        # Document
-        if "document" in rules:
-            dr = rules["document"]
-            inf, outs = dr.get("input_field"), dr.get("outputs", {})
-            strip_tokens = set(dr.get("strip_tokens", []))
-            uppercase = safe_bool(dr.get("uppercase", True))
+def write_table(df: pd.DataFrame, out_dir: Path, name: str) -> Tuple[str, Optional[str]]:
+    ensure_dir(out_dir)
+    parquet_path = out_dir / f"{name}.parquet"
+    csv_path = out_dir / f"{name}.csv"
 
-            if self.backend == "pandas":
-                base = df[inf].astype(str)
-                if uppercase: base = base.str.upper()
-                for tok in strip_tokens:
-                    base = base.str.replace(rf"\b{re.escape(tok)}\b", "", regex=True)
-                base = base.str.strip()
-                if outs.get("doc_num_norm", {}).get("regex_keep_digits", False):
-                    df["doc_num_norm"] = base.apply(lambda x: digits(x))
-                ser_pat = outs.get("doc_serie_norm", {}).get("regex_series")
-                if ser_pat:
-                    r = re.compile(ser_pat)
-                    df["doc_serie_norm"] = base.apply(lambda x: (lambda m: lstrip_zeros(m.group(1)) if m else None)(r.search(str(x))))
-            else:
-                base = pl.col(inf).cast(pl.Utf8)
-                if uppercase: base = base.str.to_uppercase()
-                for tok in strip_tokens:
-                    base = base.str.replace(rf"\b{re.escape(tok)}\b", "", literal=False)
-                base = base.str.strip()
-                df = df.with_columns(base.alias("_doc_base"))
-                df = df.with_columns(pl.col("_doc_base").map_elements(lambda x: digits(x)).alias("doc_num_norm"))
-                ser_pat = outs.get("doc_serie_norm", {}).get("regex_series")
-                if ser_pat:
-                    r = re.compile(ser_pat)
-                    df = df.with_columns(
-                        pl.col("_doc_base").map_elements(lambda x: (lambda m: lstrip_zeros(m.group(1)) if m else None)(r.search(str(x)))).alias("doc_serie_norm")
-                    )
-                df = df.drop("_doc_base")
+    try:
+        df.to_parquet(parquet_path, index=False)
+        written_parquet = str(parquet_path)
+    except Exception:
+        written_parquet = None
 
-        # Participant (generic)
-        if "participant" in rules:
-            pr = rules["participant"]
-            fields = pr.get("fields", [])
-            norm = pr.get("normalize", {})
-            do_upper = safe_bool(norm.get("upper", True))
-            do_strip = safe_bool(norm.get("strip", True))
-            do_rm_acc = safe_bool(norm.get("remove_accents", True))
+    df.to_csv(csv_path, index=False, encoding="utf-8")
+    return str(csv_path), written_parquet
 
-            def _norm_str(x):
-                if x is None: return None
-                s = str(x)
-                if do_strip: s = s.strip()
-                if do_rm_acc: s = strip_accents(s)
-                if do_upper: s = s.upper()
-                s = collapse_spaces(s)
-                return s
 
-            if self.backend == "pandas":
-                for f in fields:
-                    if f in df.columns: df[f] = df[f].apply(_norm_str)
-            else:
-                for f in fields:
-                    if f in df.columns: df = df.with_columns(pl.col(f).map_elements(_norm_str).alias(f))
+def column(df: pd.DataFrame, name: str) -> pd.Series:
+    if name in df.columns:
+        return df[name]
+    return pd.Series([None] * len(df), index=df.index, dtype=object)
 
-        # Text cleanup
-        if "text_cleanup" in rules:
-            tr = rules["text_cleanup"]
-            fields = tr.get("fields", [])
-            do_upper = safe_bool(tr.get("upper", True))
-            collapse = safe_bool(tr.get("collapse_spaces", True))
-            trim_punc = safe_bool(tr.get("trim_punctuation", True))
 
-            def _cleanup(x):
-                if x is None: return None
-                s = str(x)
-                if do_upper: s = s.upper()
-                if collapse: s = collapse_spaces(s)
-                if trim_punc: s = re.sub(r"[;,:]+$", "", s)
-                return s
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
-            if self.backend == "pandas":
-                for f in fields:
-                    if f in df.columns: df[f] = df[f].apply(_cleanup)
-            else:
-                for f in fields:
-                    if f in df.columns: df = df.with_columns(pl.col(f).map_elements(_cleanup).alias(f))
+@dataclass
+class NormalizerConfig:
+    date_formats: List[str]
+    doc_num_regex: re.Pattern
+    doc_serie_regex: re.Pattern
+    tokens_regex: List[Tuple[str, re.Pattern]]
 
-        # CFOP
-        if "cfop" in rules:
-            cr = rules["cfop"]
-            inf = cr.get("input_field")
-            keep_digits_only = safe_bool(cr.get("keep_digits_only", True))
-            pad_left_to_4 = safe_bool(cr.get("pad_left_to_4", True))
+    @classmethod
+    def load(
+        cls,
+        profiles_path: Path,
+        tokens_path: Optional[Path],
+    ) -> "NormalizerConfig":
+        doc = yaml.safe_load(profiles_path.read_text(encoding="utf-8")) or {}
+        defaults = doc.get("defaults") or {}
+        date_formats = [str(fmt) for fmt in defaults.get("date_formats", ["%d/%m/%Y"])]
+        doc_num_pattern = re.compile(str(defaults.get("doc_num_regex", r"\b(\d{1,12})\b")), re.IGNORECASE)
+        doc_serie_pattern = re.compile(str(defaults.get("doc_serie_regex", r"\b(\d{1,4})\b")), re.IGNORECASE)
 
-            def _cfop(x):
-                if x is None: return None
-                s = str(x).strip()
-                if keep_digits_only: s = digits(s) or ""
-                if pad_left_to_4 and s != "": s = s.zfill(4)
-                return s or None
+        tokens_regex: List[Tuple[str, re.Pattern]] = []
+        if tokens_path and tokens_path.exists():
+            tokens_doc = yaml.safe_load(tokens_path.read_text(encoding="utf-8")) or {}
+            for name, pattern in (tokens_doc.get("TOKENS") or {}).items():
+                tokens_regex.append((str(name), re.compile(str(pattern), re.IGNORECASE)))
 
-            if self.backend == "pandas":
-                if inf in df.columns: df["cfop"] = df[inf].apply(_cfop)
-            else:
-                if inf in df.columns: df = df.with_columns(pl.col(inf).map_elements(_cfop).alias("cfop"))
+        return cls(
+            date_formats=date_formats,
+            doc_num_regex=doc_num_pattern,
+            doc_serie_regex=doc_serie_pattern,
+            tokens_regex=tokens_regex,
+        )
 
-        # Situação
-        if "situacao" in rules:
-            sr = rules["situacao"]
-            inf = sr.get("input_field")
-            mapping = sr.get("normalize_map", {})
-            uppercase = safe_bool(sr.get("uppercase", True))
 
-            def _sit(x):
-                if x is None: return None
-                s = str(x)
-                if uppercase: s = s.upper()
-                s_clean = s.strip()
-                return mapping.get(s_clean.lower(), s if uppercase else s_clean)
+# ---------------------------------------------------------------------------
+# Normalisers per dataset
+# ---------------------------------------------------------------------------
 
-            if self.backend == "pandas":
-                if inf in df.columns: df["situacao"] = df[inf].apply(_sit)
-            else:
-                if inf in df.columns: df = df.with_columns(pl.col(inf).map_elements(_sit).alias("situacao"))
 
-        # Derived
-        for de in rules.get("derived", []):
-            expr = de.get("expr", ""); out = de.get("as")
-            if not out: continue
+class DatasetNormaliser:
+    def __init__(self, config: NormalizerConfig):
+        self.config = config
 
-            def _eval_row(row: Dict[str, Any]):
-                def _get(name): return row.get(name)
-                m = re.match(r"coalesce\(([^,]+),\s*([^)]+)\)", expr, flags=re.I)
-                if m:
-                    a, b = m.group(1).strip(), m.group(2).strip()
-                    return coalesce(_get(a), _get(b))
-                m2 = re.match(r"substr\((.+),\s*(\d+),\s*(\d+)\)", expr, flags=re.I)
-                if m2:
-                    inner, start, length = m2.group(1).strip(), int(m2.group(2)), int(m2.group(3))
-                    if inner.lower().startswith("coalesce("):
-                        m3 = re.match(r"coalesce\(([^,]+),\s*([^)]+)\)", inner, flags=re.I)
-                        if m3:
-                            a, b = m3.group(1).strip(), m3.group(2).strip()
-                            val = coalesce(_get(a), _get(b))
-                            return substr(val, start, length)
-                    else:
-                        return substr(_get(inner), start, length)
-                return None
+    def _extract_tokens(self, *texts: Optional[str]) -> str:
+        values: List[str] = []
+        for text in texts:
+            if not text:
+                continue
+            for token_name, pattern in self.config.tokens_regex:
+                for match in pattern.finditer(str(text)):
+                    value = match.group(1) if match.groups() else match.group(0)
+                    if value:
+                        values.append(f"{token_name}:{value}")
+        return json.dumps(values, ensure_ascii=False)
 
-            if self.backend == "pandas":
-                df[out] = df.apply(lambda r: _eval_row(r.to_dict()), axis=1)
-            else:
-                df = df.with_columns(pl.struct(df.columns).map_elements(lambda r: _eval_row(r)).alias(out))
+    def normalise_sucessor(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df["row_id"] = range(1, len(df) + 1)
 
-        return df
+        parts = df.reindex(columns=["part_d", "part_c"], fill_value="")
+        def _combine_parts(row):
+            values = [str(x).strip() for x in [row.get("part_d"), row.get("part_c")] if x not in (None, "", "nan", "NaN")]
+            text = " ".join(values) if values else None
+            return normalise_space(text)
 
-    # ---- validators ----
-    def _apply_validators(self, df, profile: Dict[str, Any]) -> List[str]:
-        problems = []
-        v = profile.get("validators", {})
-        for col in v.get("required_columns", []):
+        df["participante_combined"] = parts.apply(_combine_parts, axis=1)
+        df["participante_key"] = df["participante_combined"].map(lambda x: safe_upper(strip_accents(x)))
+
+        valor_raw = column(df, "valor")
+        df["valor"] = valor_raw.map(lambda v: parse_decimal(v))
+        df["valor_abs"] = df["valor"].map(abs_or_none)
+
+        data_raw = column(df, "data")
+        df["data_dt"] = data_raw.map(lambda v: parse_date(v, self.config.date_formats))
+        df["data_iso"] = df["data_dt"].map(to_iso)
+        df["mes_ref"] = df["data_dt"].map(to_month)
+
+        doc_raw = column(df, "doc")
+        historico_raw = column(df, "historico")
+
+        df["doc_num"] = pd.Series(
+            [
+                extract_first(self.config.doc_num_regex, doc_raw.iloc[i] or historico_raw.iloc[i])
+                for i in range(len(df))
+            ],
+            index=df.index,
+        )
+        df["doc_serie"] = pd.Series(
+            [
+                extract_first(self.config.doc_serie_regex, doc_raw.iloc[i] or historico_raw.iloc[i])
+                for i in range(len(df))
+            ],
+            index=df.index,
+        )
+
+        df["tokens"] = pd.Series(
+            [
+                self._extract_tokens(doc_raw.iloc[i], historico_raw.iloc[i], df["participante_combined"].iloc[i])
+                for i in range(len(df))
+            ],
+            index=df.index,
+        )
+
+        keep = [
+            "row_id",
+            "profile_id",
+            "source",
+            "data",
+            "data_iso",
+            "mes_ref",
+            "valor",
+            "valor_abs",
+            "doc",
+            "doc_num",
+            "doc_serie",
+            "historico",
+            "tokens",
+            "debito",
+            "credito",
+            "part_d",
+            "part_c",
+            "participante_combined",
+            "participante_key",
+            "transacao_id",
+        ]
+        for col in keep:
             if col not in df.columns:
-                problems.append(f"Coluna obrigatória ausente: '{col}'")
+                df[col] = None
+        return df[keep]
 
-        for k in ("at_least_one_participant","at_least_one_date"):
-            cols = v.get(k, [])
-            if cols:
-                present = [c for c in cols if c in df.columns]
-                if not present:
-                    problems.append(f"Nenhuma das colunas {cols} encontrada para '{k}'")
+    def normalise_fonte(self, df: pd.DataFrame, fonte_tipo: str) -> pd.DataFrame:
+        df = df.copy()
+        df["row_id"] = range(1, len(df) + 1)
+        df["fonte_tipo"] = fonte_tipo
 
-        def check_rule(expr: str, row: Dict[str, Any]) -> bool:
-            def _basic(cond: str) -> bool:
-                cond = cond.strip()
-                m = re.match(r"length\((\w+)\)\s*>=\s*(\d+)", cond, flags=re.I)
-                if m:
-                    fld, n = m.group(1), int(m.group(2))
-                    val = row.get(fld)
-                    return len(str(val)) >= n if val is not None else False
-                m = re.match(r"(\w+)\s+IS\s+NULL", cond, flags=re.I)
-                if m: return row.get(m.group(1)) in (None, "")
-                m = re.match(r"(\w+)\s+IS\s+NOT\s+NULL", cond, flags=re.I)
-                if m: 
-                    v = row.get(m.group(1)); return v is not None and v != ""
-                m = re.match(r"(\w+)\s*(>=|<=|=|>|<)\s*([0-9.]+)", cond, flags=re.I)
-                if m:
-                    fld, op, val = m.group(1), m.group(2), float(m.group(3))
-                    v = row.get(fld)
-                    if v is None: return False
-                    try: vf = float(v)
-                    except: return False
-                    return (vf >= val if op==">=" else
-                            vf <= val if op=="<=" else
-                            vf > val if op==">" else
-                            vf < val if op=="<" else
-                            abs(vf - val) < 1e-9)
-                return True
-            parts_or = re.split(r"\s+OR\s+", expr, flags=re.I)
-            res_or = False
-            for pr in parts_or:
-                parts_and = re.split(r"\s+AND\s+", pr, flags=re.I)
-                res_and = True
-                for pa in parts_and:
-                    res_and = res_and and _basic(pa)
-                    if not res_and: break
-                res_or = res_or or res_and
-                if res_or: break
-            return res_or
+        participante_raw = column(df, "participante")
+        df["participante"] = participante_raw.map(normalise_space)
+        df["participante_key"] = df["participante"].map(lambda x: safe_upper(strip_accents(x)))
 
-        sample = df.head(200) if self.backend == "pandas" else df.head(200)
-        for rule in v.get("rules", []):
-            name, expr = rule.get("name","regra"), rule.get("expr","")
-            if self.backend == "pandas":
-                bad = []
-                for idx, r in sample.iterrows():
-                    if not check_rule(expr, r.to_dict()):
-                        bad.append(idx)
-                if bad:
-                    problems.append(f"Validação '{name}' falhou em {len(bad)} linhas (amostra).")
-            else:
-                def _row_bad(rdict): return not check_rule(expr, rdict)
-                bad = sample.with_columns(pl.struct(sample.columns).map_elements(lambda r: _row_bad(r)).alias("_bad"))
-                nbad = int(bad["_bad"].sum()) if "_bad" in bad.columns else 0
-                if nbad:
-                    problems.append(f"Validação '{name}' falhou em {nbad} linhas (amostra).")
-        return problems
+        valor_raw = column(df, "valor")
+        df["valor"] = valor_raw.map(lambda v: parse_decimal(v))
+        df["valor_abs"] = df["valor"].map(abs_or_none)
 
-    # ---- staging mapping ----
-    def _map_to_staging(self, df, profile: Dict[str, Any]):
-        mapping = profile.get("output_mapping_to_staging", {})
-        if not mapping: return None, None
-        table = mapping.get("table")
-        cols_map = mapping.get("columns", {})
+        data_raw = column(df, "data")
+        df["data_dt"] = data_raw.map(lambda v: parse_date(v, self.config.date_formats))
+        df["data_iso"] = df["data_dt"].map(to_iso)
+        df["mes_ref"] = df["data_dt"].map(to_month)
 
-        def _eval_expr(expr: str, row: Dict[str, Any]):
-            expr = expr.strip()
-            if expr.startswith("'") and expr.endswith("'") and len(expr) >= 2:
-                return expr[1:-1]
-            m = re.match(r"coalesce\(([^,]+),\s*([^)]+)\)", expr, flags=re.I)
-            if m:
-                a, b = m.group(1).strip(), m.group(2).strip()
-                return coalesce(row.get(a), row.get(b))
-            return row.get(expr)
+        doc_raw = column(df, "doc")
+        historico_raw = column(df, "historico")
 
-        if self.backend == "pandas":
-            out_rows = []
-            for _, r in df.iterrows():
-                rdict = r.to_dict()
-                row_out = {dest: _eval_expr(src_expr, rdict) for dest, src_expr in cols_map.items()}
-                out_rows.append(row_out)
-            out_df = pd.DataFrame(out_rows)
+        df["doc_num"] = pd.Series(
+            [extract_first(self.config.doc_num_regex, doc_raw.iloc[i] or historico_raw.iloc[i]) for i in range(len(df))],
+            index=df.index,
+        )
+        df["doc_serie"] = pd.Series(
+            [extract_first(self.config.doc_serie_regex, doc_raw.iloc[i] or historico_raw.iloc[i]) for i in range(len(df))],
+            index=df.index,
+        )
+
+        df["tokens"] = pd.Series(
+            [self._extract_tokens(doc_raw.iloc[i], historico_raw.iloc[i], df["participante"].iloc[i]) for i in range(len(df))],
+            index=df.index,
+        )
+
+        keep = [
+            "row_id",
+            "profile_id",
+            "source",
+            "fonte_tipo",
+            "data",
+            "data_iso",
+            "mes_ref",
+            "valor",
+            "valor_abs",
+            "doc",
+            "doc_num",
+            "doc_serie",
+            "participante",
+            "participante_key",
+            "cfop",
+            "modelo",
+            "especie",
+            "situacao",
+            "debito_alias",
+            "credito_alias",
+            "condicao",
+            "chave_xml",
+            "tokens",
+        ]
+        for col in keep:
+            if col not in df.columns:
+                df[col] = None
+        return df[keep]
+
+    def normalise_fornecedores(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df["codigo"] = column(df, "codigo")
+        df["nome"] = column(df, "nome").map(normalise_space)
+        df["cnpj"] = column(df, "cnpj").map(lambda v: re.sub(r"\D", "", str(v)) if v else None)
+        df["nome_key"] = df["nome"].map(lambda x: safe_upper(strip_accents(x)))
+        return df[["codigo", "nome", "nome_key", "cnpj"]]
+
+    def normalise_plano(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df["codigo"] = column(df, "codigo")
+        df["alias"] = column(df, "alias").map(normalise_space)
+        df["nome"] = column(df, "nome").map(normalise_space)
+        df["natureza"] = column(df, "natureza").map(normalise_space)
+        df["alias_key"] = df["alias"].map(lambda x: safe_upper(strip_accents(x)))
+        return df[["codigo", "alias", "alias_key", "nome", "natureza"]]
+
+
+# ---------------------------------------------------------------------------
+# Driver
+# ---------------------------------------------------------------------------
+
+STAGING_TO_KIND: Dict[str, str] = {
+    "sucessor.csv": "sucessor",
+    "suprema_entradas.csv": "entradas",
+    "suprema_saidas.csv": "saidas",
+    "suprema_servicos.csv": "servicos",
+    "practice.csv": "practice",
+    "mister_contador.csv": "mister",
+    "fornecedores.csv": "fornecedores",
+    "plano_contas.csv": "plano",
+}
+
+
+_KIND_TO_FONTE = {
+    "entradas": "ENTRADA",
+    "saidas": "SAIDA",
+    "servicos": "SERVICO",
+    "practice": "PRACTICE",
+    "mister": "MISTER",
+}
+
+
+def run_normaliser(args: argparse.Namespace) -> Dict[str, object]:
+    staging_dir = Path(args.staging)
+    out_dir = Path(args.out)
+    ensure_dir(out_dir)
+
+    config = NormalizerConfig.load(Path(args.profiles), Path(args.tokens) if args.tokens else None)
+    normaliser = DatasetNormaliser(config)
+
+    summary: Dict[str, Dict[str, object]] = {}
+
+    for file_name, kind in STAGING_TO_KIND.items():
+        csv_path = staging_dir / file_name
+        if not csv_path.exists():
+            continue
+        df = pd.read_csv(csv_path, dtype=str, keep_default_na=False, encoding="utf-8")
+        if kind == "sucessor":
+            out_df = normaliser.normalise_sucessor(df)
+        elif kind in _KIND_TO_FONTE:
+            tipo = _KIND_TO_FONTE[kind]
+            out_df = normaliser.normalise_fonte(df, tipo)
+        elif kind == "fornecedores":
+            out_df = normaliser.normalise_fornecedores(df)
+        elif kind == "plano":
+            out_df = normaliser.normalise_plano(df)
         else:
-            def _build_row(r):
-                rdict = r
-                return {dest: _eval_expr(src_expr, rdict) for dest, src_expr in cols_map.items()}
-            out_df = df.with_columns(pl.struct(df.columns).map_elements(_build_row).alias("_tmp")).select("_tmp").unnest("_tmp")
-        return table, out_df
+            out_df = df.copy()
 
-    # ---- API pública ----
-    def normalize(self, df_any, profile: Dict[str, Any]):
-        df = self._df_from_any(df_any)
-        new_cols, mapping, warns = self._apply_renames(list(df.columns), profile)
-        if self.backend == "pandas":
-            df.columns = new_cols
-        else:
-            df = df.rename({old:new for old,new in mapping.items()})
-        df = self._ensure_columns(df, profile.get("canonical_columns", []))
-        df = self._apply_parse_blocks(df, profile)
-        problems = self._apply_validators(df, profile)
-        table, df_staging = self._map_to_staging(df, profile)
-        return {"df_norm": df, "staging": (table, df_staging), "warnings": warns, "problems": problems}
+        csv_written, parquet_written = write_table(out_df, out_dir, kind)
+        record = {
+            "rows": int(len(out_df)),
+            "csv": csv_written,
+            "parquet": parquet_written,
+        }
+        summary[kind] = record
+        write_jsonl(Path(args.log), {"dataset": kind, **record})
 
-# ------------- CLI -------------
-CLI_HELP = """
-Uso:
-  python normalizer.py --csv <input.csv> --profile <profile.json> --out-norm <norm.csv> --out-staging <staging.csv> [--backend pandas|polars|auto]
-"""
+    return summary
 
-def _read_csv_any(path: str, backend: str):
-    if backend == "pandas":
-        if pd is None: raise RuntimeError("pandas indisponível")
-        return pd.read_csv(path, dtype=str, keep_default_na=False, na_values=[""], encoding="utf-8")
-    else:
-        if pl is None: raise RuntimeError("polars indisponível")
-        return pl.read_csv(path, infer_schema_length=5000)
 
-def _write_csv_any(df, path: str, backend: str):
-    if backend == "pandas":
-        df.to_csv(path, index=False, encoding="utf-8")
-    else:
-        df.write_csv(path)
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
-def main(argv: List[str]) -> int:
-    import argparse
-    p = argparse.ArgumentParser(description="Normalizer (profiles → staging)")
-    p.add_argument("--csv", required=True)
-    p.add_argument("--profile", required=True)
-    p.add_argument("--out-norm", required=True)
-    p.add_argument("--out-staging", required=True)
-    p.add_argument("--backend", default="pandas", choices=["pandas","polars","auto"])
-    args = p.parse_args(argv)
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Normalises staging CSV files into typed datasets")
+    parser.add_argument("--staging", required=True, help="Directory with loader outputs")
+    parser.add_argument("--out", required=True, help="Directory to write normalised tables")
+    parser.add_argument("--profiles", required=True, help="Path to profiles_map.yml")
+    parser.add_argument("--tokens", default="cfg/regex_tokens.yml", help="Regex tokens YAML")
+    parser.add_argument("--log", default="out/logs/normaliser.jsonl", help="Log file path")
+    return parser.parse_args(argv)
 
-    prof = load_profile(args.profile)
-    normalizer = Normalizer(backend=args.backend)
-    df = _read_csv_any(args.csv, "pandas" if normalizer.backend=="pandas" else "polars")
-    result = normalizer.normalize(df, prof)
 
-    df_norm = result["df_norm"]
-    table, df_staging = result["staging"]
-    _write_csv_any(df_norm, args.out_norm, "pandas" if normalizer.backend=="pandas" else "polars")
-    if df_staging is not None:
-        _write_csv_any(df_staging, args.out_staging, "pandas" if normalizer.backend=="pandas" else "polars")
-    else:
-        Path(args.out_staging).write_text("", encoding="utf-8")
-
-    sys.stdout.write(f"Normalized rows: {len(df_norm)}\n")
-    sys.stdout.write(f"Staging table: {table}\n")
-    if result["warnings"]:
-        sys.stdout.write("Warnings:\n- " + "\n- ".join(result["warnings"]) + "\n")
-    if result["problems"]:
-        sys.stdout.write("Problems:\n- " + "\n- ".join(result["problems"]) + "\n")
+def main(argv: Optional[List[str]] = None) -> int:
+    args = parse_args(argv)
+    summary = run_normaliser(args)
+    sys.stdout.write(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
     return 0
 
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())
+
+

@@ -1,0 +1,4 @@
+﻿Data Lancamento;Conta Debito Codigo;Conta Credito Codigo;Participante Debito;Participante Credito;Numero Documento;Valor;Historico;Transacao ID
+01/08/2025;1.1.1;2.2.2;Fornecedor ABC;Banco XYZ;NF 12345/1;1.000,00;Compra NF 12345;TX001
+02/08/2025;1.1.1;2.2.2;Fornecedor ABC;Banco XYZ;NF 22346/1;500,00;Pagamento NF 22346;TX002
+03/08/2025;1.1.1;2.2.2;Fornecedor DEF;Banco XYZ;PIX 9988;750,00;PIX TXID ABC123;TX003

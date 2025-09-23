@@ -1,0 +1,3 @@
+﻿Data Entrada;Documento;Fornecedor;Valor Contabil;CFOP;Modelo;Situacao;Debito Alias;Credito Alias;Condicao;Chave XML
+01/08/2025;12345;Fornecedor ABC;1.000,00;1102;55;Autorizada;ESTOQUE;FORNECEDORES;A Vista;KEY123
+02/08/2025;22346;Fornecedor ABC;500,00;1102;55;Autorizada;ESTOQUE;FORNECEDORES;A Prazo;KEY223

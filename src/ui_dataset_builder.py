@@ -1,306 +1,247 @@
-# ui_dataset_builder.py — 16/28
-# Constrói dataset para UI (grid) a partir dos CSVs de reconciliação.
-# Saídas:
-#  - ui_grid.jsonl  : linhas prontas para a grade (um JSON por linha)
-#  - ui_meta.json   : metadados (colunas, presets de filtros, legendas, stats)
-from __future__ import annotations
-import json, sys, re
-from typing import Any, Dict, List, Optional
+﻿from __future__ import annotations
 
-try:
-    import pandas as pd
-except Exception:
-    pd = None  # type: ignore
+import argparse
+import json
+from pathlib import Path
+from typing import Dict, List, Optional
 
+import pandas as pd
 
-COLOR_OK = "#16a34a"       # verde
-COLOR_ALERTA = "#f59e0b"   # amarelo
-COLOR_DIVERG = "#dc2626"   # vermelho
-COLOR_NEUTRO = "#6b7280"   # cinza
-COLOR_INFO = "#2563eb"     # azul para destaque
+STATUS_COLOR = {
+    "OK": "#16a34a",
+    "ALERTA": "#f59e0b",
+    "DIVERGENCIA": "#dc2626",
+    "SEM_FONTE": "#64748b",
+    "SEM_SUCESSOR": "#64748b",
+}
 
 
-def _color(status: Optional[str]) -> str:
-    s = (status or "").upper()
-    if s == "OK": return COLOR_OK
-    if s == "ALERTA": return COLOR_ALERTA
-    if s == "DIVERGENCIA": return COLOR_DIVERG
-    if s in ("SEM_FONTE","SEM_SUCESSOR"): return COLOR_NEUTRO
-    return COLOR_NEUTRO
+def read_csv(path: str) -> pd.DataFrame:
+    if not path:
+        return pd.DataFrame()
+    file_path = Path(path)
+    if not file_path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(file_path, dtype=str, keep_default_na=False, encoding="utf-8")
 
 
-def _to_num(x) -> Optional[float]:
-    if x in (None, ""): return None
+def to_number(cell: Optional[str]) -> Optional[float]:
+    if cell in (None, ""):
+        return None
     try:
-        return float(x)
+        return float(cell)
     except Exception:
-        s = str(x).strip().replace(".", "").replace(",", ".")
         try:
-            return float(s)
+            return float(str(cell).replace(" ", "").replace(".", "").replace(",", "."))
         except Exception:
             return None
 
 
-def _abs_or_none(x) -> Optional[float]:
-    if x in (None, ""): return None
-    try:
-        return abs(float(x))
-    except Exception:
-        try:
-            return abs(float(str(x).replace(",", ".")))
-        except Exception:
-            return None
-
-
-def _norm_text(x: Any) -> Optional[str]:
-    if x is None: return None
-    s = str(x).strip()
-    return re.sub(r"\s+", " ", s) if s else None
-
-
-def _bool(x: Any) -> bool:
-    return str(x).strip().lower() in ("1", "true", "t", "yes", "y", "sim")
-
-
-def _mk_row_id(i: int, fonte_tipo: Optional[str], s_idx: Optional[int]) -> str:
-    # id estável por período/projeto: <S-idx>-<fonte_tipo>
-    prefix = "S" + (str(s_idx) if s_idx is not None else "NA")
-    ft = (fonte_tipo or "NA")[:3].upper()
-    return f"{prefix}-{ft}-{i}"
-
-
-def build_ui_rows(grid_df: 'pd.DataFrame') -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    for i, r in grid_df.iterrows():
-        sidx = r.get("sucessor_idx")
-        fonte_tipo = r.get("fonte_tipo")
-        status = r.get("match.status")
-        cor = _color(status)
-
-        # campos principais (com prefixos S. e F.)
-        row = {
-            "id": _mk_row_id(i, fonte_tipo, sidx if sidx not in (None, "") else None),
-            "status": status,
-            "color": cor,
-            "strategy": r.get("match.strategy"),
-            "score": _to_num(r.get("match.score")),
-            "motivos": _norm_text(r.get("match.motivos")),
-            "fonte_tipo": fonte_tipo,
-            # Sucessor
-            "S.data": r.get("S.data"),
-            "S.debito": r.get("S.debito"),
-            "S.credito": r.get("S.credito"),
-            "S.part_d": r.get("S.part_d"),
-            "S.part_c": r.get("S.part_c"),
-            "S.doc": r.get("S.doc"),
-            "S.valor": _to_num(r.get("S.valor")),
-            "S.historico": _norm_text(r.get("S.historico")),
-            # Fonte
-            "F.data": r.get("F.data"),
-            "F.doc": r.get("F.doc"),
-            "F.participante": r.get("F.participante"),
-            "F.valor": _to_num(r.get("F.valor")),
-            "F.cfop": r.get("F.cfop"),
-            "F.situacao": r.get("F.situacao"),
-            # Deltas
-            "delta.valor": _to_num(r.get("delta.valor")),
-            "delta.dias": _to_num(r.get("delta.dias")),
-        }
-
-        # quick-tags para filtros client-side
-        tags = []
-        if status: tags.append(status)
-        if fonte_tipo: tags.append(fonte_tipo)
-        if r.get("F.cfop"): tags.append(f"CFOP:{r.get('F.cfop')}")
-        if r.get("S.debito"): tags.append(f"DEB:{str(r.get('S.debito'))[:12]}")
-        if r.get("S.credito"): tags.append(f"CRE:{str(r.get('S.credito'))[:12]}")
-        if r.get("S.doc"): tags.append(f"DOC:{str(r.get('S.doc'))}")
-        if r.get("F.situacao"): tags.append(f"SIT:{str(r.get('F.situacao')).upper()}")
-        row["tags"] = tags
-
-        rows.append(row)
-    return rows
-
-
-def build_meta(grid_df: 'pd.DataFrame', sem_fonte_df: 'pd.DataFrame', sem_sucessor_df: 'pd.DataFrame') -> Dict[str, Any]:
-    # colunas da UI (sugestão TanStack/AG)
-    columns = [
-        {"id": "status", "label": "Status", "type": "badge", "width": 100},
-        {"id": "strategy", "label": "Regra", "type": "text", "width": 80},
-        {"id": "score", "label": "Score", "type": "number", "width": 80},
-        {"id": "S.data", "label": "Data (S)", "type": "date", "width": 100, "group": "Sucessor"},
-        {"id": "S.debito", "label": "Débito", "type": "text", "width": 220, "group": "Sucessor"},
-        {"id": "S.credito", "label": "Crédito", "type": "text", "width": 220, "group": "Sucessor"},
-        {"id": "S.part_d", "label": "Part. D", "type": "text", "width": 160, "group": "Sucessor"},
-        {"id": "S.part_c", "label": "Part. C", "type": "text", "width": 160, "group": "Sucessor"},
-        {"id": "S.doc", "label": "Nº Docto (S)", "type": "text", "width": 140, "group": "Sucessor"},
-        {"id": "S.valor", "label": "Valor (S)", "type": "money", "width": 120, "group": "Sucessor"},
-        {"id": "S.historico", "label": "Histórico", "type": "text", "width": 360, "group": "Sucessor"},
-        {"id": "fonte_tipo", "label": "Fonte", "type": "text", "width": 100, "group": "Fonte"},
-        {"id": "F.data", "label": "Data (F)", "type": "date", "width": 100, "group": "Fonte"},
-        {"id": "F.doc", "label": "Nº Docto (F)", "type": "text", "width": 140, "group": "Fonte"},
-        {"id": "F.participante", "label": "Participante (F)", "type": "text", "width": 200, "group": "Fonte"},
-        {"id": "F.valor", "label": "Valor (F)", "type": "money", "width": 120, "group": "Fonte"},
-        {"id": "F.cfop", "label": "CFOP", "type": "text", "width": 90, "group": "Fonte"},
-        {"id": "F.situacao", "label": "Situação", "type": "text", "width": 120, "group": "Fonte"},
-        {"id": "delta.valor", "label": "Δ Valor", "type": "money", "width": 120, "group": "Diferenças"},
-        {"id": "delta.dias", "label": "Δ Dias", "type": "number", "width": 90, "group": "Diferenças"},
-        {"id": "motivos", "label": "Motivos", "type": "text", "width": 360},
-        {"id": "tags", "label": "Tags", "type": "array", "width": 260},
-    ]
-
-    # presets de filtros úteis
-    presets = [
-        {"id": "only_ok", "label": "Somente OK", "filters": [{"field": "status", "op": "=", "value": "OK"}]},
-        {"id": "only_alerta", "label": "Somente Alertas", "filters": [{"field": "status", "op": "=", "value": "ALERTA"}]},
-        {"id": "only_diverg", "label": "Somente Divergências", "filters": [{"field": "status", "op": "=", "value": "DIVERGENCIA"}]},
-        {"id": "only_sem_fonte", "label": "Sem Fonte", "filters": [{"field": "status", "op": "=", "value": "SEM_FONTE"}]},
-        {"id": "only_sem_sucessor", "label": "Sem Sucessor", "filters": [{"field": "status", "op": "=", "value": "SEM_SUCESSOR"}]},
-        {"id": "entrada_diverg", "label": "Divergências (Entradas)", "filters": [{"field": "status", "op": "=", "value": "DIVERGENCIA"}, {"field": "fonte_tipo", "op": "=", "value": "ENTRADA"}]},
-        {"id": "saida_diverg", "label": "Divergências (Saídas)", "filters": [{"field": "status", "op": "=", "value": "DIVERGENCIA"}, {"field": "fonte_tipo", "op": "=", "value": "SAIDA"}]},
-    ]
-
-    legend = [
-        {"status": "OK", "color": COLOR_OK},
-        {"status": "ALERTA", "color": COLOR_ALERTA},
-        {"status": "DIVERGENCIA", "color": COLOR_DIVERG},
-        {"status": "SEM_FONTE/SEM_SUCESSOR", "color": COLOR_NEUTRO},
-    ]
-
-    # estatísticas rápidas
-    def _count(df: 'pd.DataFrame', val: str) -> int:
-        if "match.status" not in df.columns: return 0
-        return int((df["match.status"] == val).sum())
-
-    stats = {
-        "linhas_grid": len(grid_df),
-        "ok": _count(grid_df, "OK"),
-        "alerta": _count(grid_df, "ALERTA"),
-        "divergencia": _count(grid_df, "DIVERGENCIA"),
-        "sem_fonte": len(sem_fonte_df),
-        "sem_sucessor": len(sem_sucessor_df),
-    }
-
+def build_base_row(row: pd.Series) -> Dict[str, object]:
+    status = str(row.get("match.status") or row.get("status") or "").upper()
     return {
-        "columns": columns,
-        "presets": presets,
-        "legend": legend,
-        "stats": stats,
-        "version": 1,
+        "status": status,
+        "color": STATUS_COLOR.get(status, "#1f2937"),
+        "strategy": row.get("match.strategy"),
+        "score": to_number(row.get("match.score")),
+        "motivos": row.get("match.motivos"),
+        "sucessor_idx": row.get("sucessor_idx"),
+        "fonte_idx": row.get("fonte_idx"),
+        "fonte_tipo": row.get("fonte_tipo"),
+        "S.data": row.get("S.data"),
+        "S.doc": row.get("S.doc"),
+        "S.valor": to_number(row.get("S.valor")),
+        "S.part_d": row.get("S.part_d"),
+        "S.part_c": row.get("S.part_c"),
+        "S.historico": row.get("S.historico"),
+        "F.data": row.get("F.data"),
+        "F.doc": row.get("F.doc"),
+        "F.valor": to_number(row.get("F.valor")),
+        "F.cfop": row.get("F.cfop"),
+        "F.participante": row.get("F.participante"),
+        "F.situacao": row.get("F.situacao"),
+        "delta.valor": to_number(row.get("delta.valor")),
+        "delta.dias": to_number(row.get("delta.dias")),
     }
 
 
-def write_jsonl(rows: List[Dict[str, Any]], out_path: str) -> None:
-    with open(out_path, "w", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+def build_rows(grid_df: pd.DataFrame, sem_fonte_df: pd.DataFrame, sem_sucessor_df: pd.DataFrame) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    for idx, row in grid_df.iterrows():
+        base = build_base_row(row)
+        base["id"] = f"S{base.get('sucessor_idx', idx)}-{base.get('fonte_tipo','?')}-{base.get('fonte_idx','?')}"
+        tags: List[str] = []
+        if base.get("status"):
+            tags.append(str(base["status"]))
+        if base.get("fonte_tipo"):
+            tags.append(str(base["fonte_tipo"]))
+        if row.get("F.cfop"):
+            tags.append(f"CFOP:{row.get('F.cfop')}")
+        base["tags"] = tags
+        rows.append(base)
 
-
-def run_builder(
-    grid_csv: str,
-    sem_fonte_csv: str,
-    sem_sucessor_csv: str,
-    out_jsonl: str,
-    out_meta: str,
-) -> Dict[str, Any]:
-    assert pd is not None, "pandas requerido"
-    grid_df = pd.read_csv(grid_csv, dtype=str, keep_default_na=False, na_values=[""], encoding="utf-8")
-    sem_fonte_df = pd.read_csv(sem_fonte_csv, dtype=str, keep_default_na=False, na_values=[""], encoding="utf-8")
-    sem_sucessor_df = pd.read_csv(sem_sucessor_csv, dtype=str, keep_default_na=False, na_values=[""], encoding="utf-8")
-
-    # construir linhas para UI
-    rows = build_ui_rows(grid_df)
-
-    # anexar listas auxiliares como estados especiais
-    # Sem Fonte
-    for i, r in sem_fonte_df.iterrows():
-        rows.append({
-            "id": f"SF-{i}",
+    for idx, row in sem_fonte_df.iterrows():
+        base = {
+            "id": f"SF-{idx}",
             "status": "SEM_FONTE",
-            "color": _color("SEM_FONTE"),
+            "color": STATUS_COLOR["SEM_FONTE"],
             "strategy": None,
             "score": None,
             "motivos": None,
+            "sucessor_idx": row.get("S.row_id"),
+            "fonte_idx": None,
             "fonte_tipo": None,
-            "S.data": r.get("S.data"),
-            "S.debito": r.get("S.debito"),
-            "S.credito": r.get("S.credito"),
-            "S.part_d": r.get("S.part_d"),
-            "S.part_c": r.get("S.part_c"),
-            "S.doc": r.get("S.doc"),
-            "S.valor": _to_num(r.get("S.valor")),
-            "S.historico": _norm_text(r.get("S.historico")),
+            "S.data": row.get("S.data"),
+            "S.doc": row.get("S.doc"),
+            "S.valor": to_number(row.get("S.valor")),
+            "S.part_d": row.get("S.part_d"),
+            "S.part_c": row.get("S.part_c"),
+            "S.historico": row.get("S.historico"),
             "F.data": None,
             "F.doc": None,
-            "F.participante": None,
             "F.valor": None,
             "F.cfop": None,
+            "F.participante": None,
             "F.situacao": None,
             "delta.valor": None,
             "delta.dias": None,
             "tags": ["SEM_FONTE"],
-        })
+        }
+        rows.append(base)
 
-    # Sem Sucessor
-    for i, r in sem_sucessor_df.iterrows():
-        rows.append({
-            "id": f"SS-{i}",
-            "status": "SEM_SUCESSOR",
-            "color": _color("SEM_SUCESSOR"),
-            "strategy": None,
-            "score": None,
-            "motivos": None,
-            "fonte_tipo": r.get("fonte_tipo") or r.get("F.fonte_tipo") or None,
-            "S.data": None,
-            "S.debito": None,
-            "S.credito": None,
-            "S.part_d": None,
-            "S.part_c": None,
-            "S.doc": None,
-            "S.valor": None,
-            "S.historico": None,
-            "F.data": r.get("F.data"),
-            "F.doc": r.get("F.doc"),
-            "F.participante": r.get("F.participante"),
-            "F.valor": _to_num(r.get("F.valor")),
-            "F.cfop": r.get("F.cfop"),
-            "F.situacao": r.get("F.situacao"),
-            "delta.valor": None,
-            "delta.dias": None,
-            "tags": ["SEM_SUCESSOR", f"CFOP:{r.get('F.cfop')}"] if r.get("F.cfop") else ["SEM_SUCESSOR"],
-        })
-
-    # meta
-    meta = build_meta(grid_df, sem_fonte_df, sem_sucessor_df)
-
-    # gravar
-    write_jsonl(rows, out_jsonl)
-    with open(out_meta, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-
-    return {"rows": len(rows), "out_jsonl": out_jsonl, "out_meta": out_meta, "stats": meta.get("stats")}
+    for idx, row in sem_sucessor_df.iterrows():
+        cfop = row.get("F.cfop")
+        tags = ["SEM_SUCESSOR"]
+        if cfop:
+            tags.append(f"CFOP:{cfop}")
+        rows.append(
+            {
+                "id": f"SS-{idx}",
+                "status": "SEM_SUCESSOR",
+                "color": STATUS_COLOR["SEM_SUCESSOR"],
+                "strategy": None,
+                "score": None,
+                "motivos": None,
+                "sucessor_idx": None,
+                "fonte_idx": row.get("F.row_id"),
+                "fonte_tipo": row.get("fonte_tipo"),
+                "S.data": None,
+                "S.doc": None,
+                "S.valor": None,
+                "S.part_d": None,
+                "S.part_c": None,
+                "S.historico": None,
+                "F.data": row.get("F.data"),
+                "F.doc": row.get("F.doc"),
+                "F.valor": to_number(row.get("F.valor")),
+                "F.cfop": cfop,
+                "F.participante": row.get("F.participante"),
+                "F.situacao": row.get("F.situacao"),
+                "delta.valor": None,
+                "delta.dias": None,
+                "tags": tags,
+            }
+        )
+    return rows
 
 
-def main(argv: List[str]) -> int:
-    import argparse
-    p = argparse.ArgumentParser(description="ui_dataset_builder.py — monta dataset e metadados para a UI")
-    p.add_argument("--grid", required=True, help="CSV gerado pelo reconciler (--out-grid)")
-    p.add_argument("--sem-fonte", required=True, help="CSV gerado pelo reconciler (--out-sem-fonte)")
-    p.add_argument("--sem-sucessor", required=True, help="CSV gerado pelo reconciler (--out-sem-sucessor)")
-    p.add_argument("--out-jsonl", default="ui_grid.jsonl")
-    p.add_argument("--out-meta", default="ui_meta.json")
-    args = p.parse_args(argv)
+def compute_stats(grid_df: pd.DataFrame, sem_fonte_df: pd.DataFrame, sem_sucessor_df: pd.DataFrame) -> Dict[str, object]:
+    status_col = "match.status" if "match.status" in grid_df.columns else "status"
+    counts = grid_df[status_col].str.upper().value_counts() if not grid_df.empty else {}
+    return {
+        "total_matches": int(len(grid_df)),
+        "ok": int(counts.get("OK", 0)),
+        "alerta": int(counts.get("ALERTA", 0)),
+        "divergencia": int(counts.get("DIVERGENCIA", 0)),
+        "sem_fonte": int(len(sem_fonte_df)),
+        "sem_sucessor": int(len(sem_sucessor_df)),
+    }
 
-    res = run_builder(
-        grid_csv=args.grid,
-        sem_fonte_csv=args.sem_fonte,
-        sem_sucessor_csv=args.sem_sucessor,
-        out_jsonl=args.out_jsonl,
-        out_meta=args.out_meta,
-    )
-    sys.stdout.write(json.dumps(res, ensure_ascii=False, indent=2) + "\n")
+
+def load_schema(path: Optional[str]) -> Optional[Dict[str, object]]:
+    if not path:
+        return None
+    schema_path = Path(path)
+    if not schema_path.exists():
+        return None
+    return json.loads(schema_path.read_text(encoding="utf-8"))
+
+
+def write_jsonl(rows: List[Dict[str, object]], out_path: Path) -> None:
+    ensure_dir(out_path.parent)
+    with out_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def build_meta(schema: Optional[Dict[str, object]], stats: Dict[str, object]) -> Dict[str, object]:
+    meta = {
+        "version": 1,
+        "stats": stats,
+        "columns": [],
+        "legend": [
+            {"status": "OK", "color": STATUS_COLOR["OK"], "label": "Correspond\u00eancia confirmada"},
+            {"status": "ALERTA", "color": STATUS_COLOR["ALERTA"], "label": "Precisa de revis\u00e3o"},
+            {"status": "DIVERGENCIA", "color": STATUS_COLOR["DIVERGENCIA"], "label": "Conferir detalhes"},
+            {"status": "SEM_FONTE", "color": STATUS_COLOR["SEM_FONTE"], "label": "Sem fonte correspondente"},
+            {"status": "SEM_SUCESSOR", "color": STATUS_COLOR["SEM_SUCESSOR"], "label": "Sem Sucessor correspondente"},
+        ],
+        "presets": [
+            {"name": "Apenas Diverg\u00eancias", "filters": {"status": ["DIVERGENCIA"]}},
+            {"name": "Sem Fonte", "filters": {"status": ["SEM_FONTE"]}},
+        ],
+    }
+    if schema and schema.get("columns"):
+        meta["columns"] = schema["columns"]
+    else:
+        meta["columns"] = [
+            {"id": "status", "label": "Status"},
+            {"id": "match.score", "label": "Score"},
+            {"id": "match.strategy", "label": "Estrat\u00e9gia"},
+            {"id": "S.doc", "label": "Documento (S)"},
+            {"id": "F.doc", "label": "Documento (F)"},
+            {"id": "delta.valor", "label": "Delta Valor"},
+            {"id": "delta.dias", "label": "Delta Dias"},
+        ]
+    return meta
+
+
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Builds UI dataset (JSONL + metadata)")
+    parser.add_argument("--grid", required=True)
+    parser.add_argument("--sem-fonte", required=True)
+    parser.add_argument("--sem-sucessor", required=True)
+    parser.add_argument("--out-jsonl", required=True)
+    parser.add_argument("--meta", required=True)
+    parser.add_argument("--schema")
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = parse_args(argv)
+    grid_df = read_csv(args.grid)
+    sem_fonte_df = read_csv(args.sem_fonte)
+    sem_sucessor_df = read_csv(args.sem_sucessor)
+
+    rows = build_rows(grid_df, sem_fonte_df, sem_sucessor_df)
+    write_jsonl(rows, Path(args.out_jsonl))
+
+    schema = load_schema(args.schema)
+    stats = compute_stats(grid_df, sem_fonte_df, sem_sucessor_df)
+    meta = build_meta(schema, stats)
+    ensure_dir(Path(args.meta).parent)
+    Path(args.meta).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    summary = {"rows": len(rows), "meta": args.meta, "jsonl": args.out_jsonl}
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    import sys
+
+    sys.exit(main())

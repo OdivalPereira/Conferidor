@@ -1,113 +1,86 @@
-# ui_server.py — 23/28
-# Servidor local (FastAPI) que expõe:
-#   - /api/schema        → ui_schema.json
-#   - /api/meta          → ui_meta.json
-#   - /api/grid          → ui_grid.jsonl (com filtros/ paginação simples)
-#   - /api/files         → lista arquivos na pasta de dados
-#   - /api/export/xlsx   → chama export_xlsx.py
-#   - /api/export/pdf    → chama export_pdf.py
-#   - /api/health        → ping
-#   - /                  → página simples com links úteis
-#
-# Observação: upload manual de arquivos é feito fora (por enquanto). Este servidor só lê/serve e dispara exports.
-# Use: uvicorn ui_server:app --reload --port 8000
-from __future__ import annotations
-import os, json, io
-from typing import Any, Dict, List, Optional
+﻿from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse, FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# Dependências opcionais (presentes nas etapas anteriores)
 try:
-    import pandas as pd  # type: ignore
-except Exception:
-    pd = None  # type: ignore
-
-# Importa módulos dos arquivos já gerados (opcionais)
-try:
-    from export_xlsx import run_export as run_export_xlsx  # type: ignore
-except Exception:
-    run_export_xlsx = None  # type: ignore
+    from export_xlsx import run as run_export_xlsx  # type: ignore
+except Exception:  # pragma: no cover
+    run_export_xlsx = None
 
 try:
-    from export_pdf import run_export_pdf  # type: ignore
-except Exception:
-    run_export_pdf = None  # type: ignore
+    from export_pdf import run as run_export_pdf  # type: ignore
+except Exception:  # pragma: no cover
+    run_export_pdf = None
 
-APP_TITLE = "App de Conferência — Servidor Local"
-DATA_DIR = os.environ.get("DATA_DIR", ".")  # por padrão, diretório atual
-DATA_DIR = os.path.abspath(DATA_DIR)
+APP_TITLE = "Conferidor UI"
+DATA_DIR = Path(os.environ.get("DATA_DIR", "out")).resolve()
+SCHEMA_PATH = Path(os.environ.get("UI_SCHEMA", "cfg/ui_schema.json")).resolve()
 
 app = FastAPI(title=APP_TITLE)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Monta arquivos estáticos para facilitar download (CSV/XLSX/PDF/JSON)
-if os.path.isdir(DATA_DIR):
-    app.mount("/files", StaticFiles(directory=DATA_DIR), name="files")
+if DATA_DIR.exists():
+    app.mount("/files", StaticFiles(directory=str(DATA_DIR)), name="files")
 
 
-def _path(*parts: str) -> str:
-    return os.path.join(DATA_DIR, *parts)
+def _read_json(path: Path) -> Dict[str, object]:
+    if not path.exists():
+        raise HTTPException(404, detail=f"File not found: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _safe_read_json(path: str) -> Optional[Dict[str, Any]]:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-
-def _read_jsonl(path: str):
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
+def _read_jsonl(path: Path) -> List[Dict[str, object]]:
+    if not path.exists():
+        raise HTTPException(404, detail=f"File not found: {path}")
+    rows: List[Dict[str, object]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
             line = line.strip()
             if not line:
                 continue
             try:
-                yield json.loads(line)
-            except Exception:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
                 continue
+    return rows
 
 
 @app.get("/", response_class=HTMLResponse)
-def index():
+def index() -> HTMLResponse:
     html = f"""
     <html><head><meta charset='utf-8'><title>{APP_TITLE}</title>
     <style>
-      body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; padding: 20px; }}
+      body {{ font-family: system-ui, sans-serif; margin: 0; padding: 24px; background: #f9fafb; color: #1f2937; }}
       a {{ color: #2563eb; text-decoration: none; }}
-      code {{ background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }}
-      .card {{ border: 1px solid #e5e7eb; padding: 16px; border-radius: 8px; margin: 12px 0; }}
+      .card {{ background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(15,23,42,0.08); }}
     </style></head><body>
-      <h2>{APP_TITLE}</h2>
+      <h1>{APP_TITLE}</h1>
       <div class="card">
-        <p><b>DATA_DIR:</b> {DATA_DIR}</p>
-        <p>Downloads diretos: <a href="/files/" target="_blank">/files/</a></p>
-        <p>APIs: 
-          <a href="/api/schema" target="_blank">/api/schema</a> · 
-          <a href="/api/meta" target="_blank">/api/meta</a> · 
-          <a href="/api/grid?limit=50" target="_blank">/api/grid</a> · 
-          <a href="/api/files" target="_blank">/api/files</a> · 
-          <a href="/api/health" target="_blank">/api/health</a>
-        </p>
-        <p>Swagger: <a href="/docs" target="_blank">/docs</a></p>
+        <p><strong>DATA_DIR:</strong> {DATA_DIR}</p>
+        <p>Downloads: <a href="/files/" target="_blank">/files/</a></p>
       </div>
       <div class="card">
-        <h3>Exports</h3>
-        <p>Excel: <code>POST /api/export/xlsx</code> com JSON:
-        <pre>{{"grid":"reconc_grid.csv","sem_fonte":"reconc_sem_fonte.csv","sem_sucessor":"reconc_sem_sucessor.csv","out":"relatorio.xlsx"}}</pre></p>
-        <p>PDF: <code>POST /api/export/pdf</code> com JSON:
-        <pre>{{"grid":"reconc_grid.csv","out":"relatorio.pdf","cliente":"Nome","periodo":"08/2025"}}</pre></p>
+        <h3>APIs</h3>
+        <ul>
+          <li><a href="/api/health" target="_blank">/api/health</a></li>
+          <li><a href="/api/schema" target="_blank">/api/schema</a></li>
+          <li><a href="/api/meta" target="_blank">/api/meta</a></li>
+          <li><a href="/api/grid?limit=50" target="_blank">/api/grid</a></li>
+          <li><a href="/api/files" target="_blank">/api/files</a></li>
+        </ul>
       </div>
     </body></html>
     """
@@ -115,137 +88,128 @@ def index():
 
 
 @app.get("/api/health")
-def health():
-    return {"ok": True, "data_dir": DATA_DIR}
-
-
-@app.get("/api/files")
-def list_files(pattern: Optional[str] = Query(default=None, description="Filtro simples por sufixo, ex.: .csv, .json, .xlsx, .pdf")):
-    if not os.path.isdir(DATA_DIR):
-        raise HTTPException(500, detail=f"DATA_DIR não existe: {DATA_DIR}")
-    out = []
-    for root, _, files in os.walk(DATA_DIR):
-        for fn in files:
-            if pattern and not fn.lower().endswith(pattern.lower()):
-                continue
-            full = os.path.join(root, fn)
-            rel = os.path.relpath(full, DATA_DIR).replace("\\", "/")
-            out.append({
-                "name": fn,
-                "relpath": rel,
-                "size": os.path.getsize(full),
-                "download": f"/files/{rel}"
-            })
-    out.sort(key=lambda x: x["relpath"])
-    return {"count": len(out), "items": out}
+def api_health() -> Dict[str, object]:
+    return {"ok": True, "data_dir": str(DATA_DIR)}
 
 
 @app.get("/api/schema")
-def get_schema():
-    p = _path("ui_schema.json")
-    data = _safe_read_json(p)
-    if data is None:
-        # fallback mínimo
-        data = {"version": 1, "columns": [{"id":"status","label":"Status"},{"id":"S.doc","label":"Nº Docto (S)"}]}
-    return data
+def api_schema() -> Dict[str, object]:
+    if not SCHEMA_PATH.exists():
+        return {"version": 1, "columns": []}
+    return _read_json(SCHEMA_PATH)
 
 
 @app.get("/api/meta")
-def get_meta():
-    p = _path("ui_meta.json")
-    data = _safe_read_json(p)
-    if data is None:
-        data = {"columns": [], "presets": [], "legend": [], "stats": {}}
-    return data
+def api_meta() -> Dict[str, object]:
+    meta_path = DATA_DIR / "ui_meta.json"
+    if not meta_path.exists():
+        raise HTTPException(404, detail="ui_meta.json not found")
+    return _read_json(meta_path)
 
 
 @app.get("/api/grid")
-def get_grid(
-    limit: int = Query(200, ge=1, le=5000),
+def api_grid(
+    limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
-    status: Optional[str] = Query(None, description="Filtra por status ex.: OK, ALERTA, DIVERGENCIA, SEM_FONTE, SEM_SUCESSOR"),
-    fonte_tipo: Optional[str] = Query(None, description="ENTRADA, SAIDA, SERVICO"),
-    cfop: Optional[str] = Query(None, description="Filtra por F.cfop"),
-    q: Optional[str] = Query(None, description="Busca textual simples em S.historico/S.doc/F.doc/Tags"),
-    sort_by: Optional[str] = Query(None, description="Campo para sort ex.: score, delta.valor, S.data"),
-    sort_dir: Optional[str] = Query("desc", description="asc/desc"),
-):
-    p = _path("ui_grid.jsonl")
-    if not os.path.exists(p):
-        raise HTTPException(404, detail="ui_grid.jsonl não encontrado. Gere com ui_dataset_builder.py")
+    status: Optional[str] = None,
+    fonte_tipo: Optional[str] = None,
+    cfop: Optional[str] = None,
+    q: Optional[str] = Query(None, description="Simple full text filter"),
+    sort_by: Optional[str] = Query(None),
+    sort_dir: str = Query("desc", regex="^(asc|desc)$"),
+) -> Dict[str, object]:
+    grid_path = DATA_DIR / "ui_grid.jsonl"
+    rows = _read_jsonl(grid_path)
 
-    # stream e filtra
-    rows = []
-    total = 0
-    q_low = q.lower() if q else None
-    for row in _read_jsonl(p):
-        total += 1
-        if status and str(row.get("status")).upper() != status.upper():
-            continue
+    def row_match(row: Dict[str, object]) -> bool:
+        if status and str(row.get("status") or "").upper() != status.upper():
+            return False
         if fonte_tipo and str(row.get("fonte_tipo") or "").upper() != fonte_tipo.upper():
-            continue
+            return False
         if cfop and str(row.get("F.cfop") or "") != cfop:
-            continue
-        if q_low:
-            buf = " ".join([
-                str(row.get("S.historico") or ""),
-                str(row.get("S.doc") or ""),
-                str(row.get("F.doc") or ""),
-                " ".join([str(x) for x in row.get("tags") or []])
-            ]).lower()
-            if q_low not in buf:
-                continue
-        rows.append(row)
+            return False
+        if q:
+            haystack = " ".join(
+                str(row.get(key) or "")
+                for key in ("S.historico", "S.doc", "F.doc", "F.participante", "motivos")
+            ).lower()
+            if q.lower() not in haystack:
+                return False
+        return True
 
-    # sort opcional (em memória)
+    filtered = [row for row in rows if row_match(row)]
+
     if sort_by:
-        try:
-            reverse = (str(sort_dir or "desc").lower() != "asc")
-            rows.sort(key=lambda r: (r.get(sort_by) is None, r.get(sort_by)), reverse=reverse)
-        except Exception:
-            pass
+        reverse = sort_dir.lower() != "asc"
+        filtered.sort(key=lambda item: item.get(sort_by), reverse=reverse)
 
-    # paginação
-    page = rows[offset:offset+limit]
-    return {"total_filtered": len(rows), "returned": len(page), "offset": offset, "limit": limit, "items": page}
+    paginated = filtered[offset : offset + limit]
+    return {
+        "total": len(rows),
+        "total_filtered": len(filtered),
+        "returned": len(paginated),
+        "offset": offset,
+        "limit": limit,
+        "items": paginated,
+    }
+
+
+@app.get("/api/files")
+def api_files() -> Dict[str, object]:
+    if not DATA_DIR.exists():
+        raise HTTPException(404, detail=f"Directory not found: {DATA_DIR}")
+    items: List[Dict[str, object]] = []
+    for path in DATA_DIR.rglob("*"):
+        if path.is_file():
+            rel = path.relative_to(DATA_DIR).as_posix()
+            items.append({
+                "name": path.name,
+                "path": rel,
+                "size": path.stat().st_size,
+                "download": f"/files/{rel}",
+            })
+    items.sort(key=lambda item: item["path"].lower())
+    return {"count": len(items), "items": items}
 
 
 @app.post("/api/export/xlsx")
-def export_xlsx(payload: Dict[str, Any]):
+def api_export_xlsx(payload: Dict[str, object]):
     if run_export_xlsx is None:
-        raise HTTPException(500, detail="export_xlsx não disponível neste ambiente.")
-    grid = _path(payload.get("grid", "reconc_grid.csv"))
-    sem_fonte = _path(payload.get("sem_fonte", "reconc_sem_fonte.csv"))
-    sem_sucessor = _path(payload.get("sem_sucessor", "reconc_sem_sucessor.csv"))
-    out = _path(payload.get("out", "relatorio_conferencia.xlsx"))
-    try:
-        res = run_export_xlsx(grid_csv=grid, sem_fonte_csv=sem_fonte, sem_sucessor_csv=sem_sucessor, out_xlsx=out)
-    except Exception as e:
-        raise HTTPException(500, detail=f"Falha no export_xlsx: {e}")
-    rel = os.path.relpath(res["out"], DATA_DIR).replace("\\", "/")
-    res["download"] = f"/files/{rel}"
-    return res
+        raise HTTPException(500, detail="export_xlsx is not available in this runtime")
+    grid = payload.get("grid", "out/match/reconc_grid.csv")
+    sem_fonte = payload.get("sem_fonte", "out/match/reconc_sem_fonte.csv")
+    sem_sucessor = payload.get("sem_sucessor", "out/match/reconc_sem_sucessor.csv")
+    out = payload.get("out", "out/relatorio_conferencia.xlsx")
+    result = run_export_xlsx(
+        grid_csv=str(Path(grid)),
+        sem_fonte_csv=str(Path(sem_fonte)),
+        sem_sucessor_csv=str(Path(sem_sucessor)),
+        out_path=str(Path(out)),
+    )
+    rel = Path(result["out"]).resolve().relative_to(DATA_DIR)
+    result["download"] = f"/files/{rel.as_posix()}"
+    return result
 
 
 @app.post("/api/export/pdf")
-def export_pdf(payload: Dict[str, Any]):
+def api_export_pdf(payload: Dict[str, object]):
     if run_export_pdf is None:
-        raise HTTPException(500, detail="export_pdf não disponível neste ambiente.")
-    grid = _path(payload.get("grid", "reconc_grid.csv"))
-    out = _path(payload.get("out", "relatorio_conferencia.pdf"))
+        raise HTTPException(500, detail="export_pdf is not available in this runtime")
+    grid = payload.get("grid", "out/match/reconc_grid.csv")
+    out = payload.get("out", "out/relatorio_conferencia.pdf")
     cliente = payload.get("cliente")
     periodo = payload.get("periodo")
-    try:
-        res = run_export_pdf(grid_csv=grid, out_pdf=out, cliente=cliente, periodo=periodo)
-    except Exception as e:
-        raise HTTPException(500, detail=f"Falha no export_pdf: {e}")
-    if res.get("pdf"):
-        rel = os.path.relpath(res["pdf"], DATA_DIR).replace("\\", "/")
-        res["download"] = f"/files/{rel}"
-    elif res.get("html"):
-        rel = os.path.relpath(res["html"], DATA_DIR).replace("\\", "/")
-        res["download_html"] = f"/files/{rel}"
-    # gráficos (se existirem)
-    charts = res.get("charts") or []
-    res["charts_download"] = [f"/files/{os.path.relpath(c, DATA_DIR).replace('\\','/')}" for c in charts if os.path.exists(c)]
-    return res
+    result = run_export_pdf(
+        grid_csv=str(Path(grid)),
+        out_path=str(Path(out)),
+        cliente=cliente,
+        periodo=periodo,
+    )
+    if result.get("pdf"):
+        rel = Path(result["pdf"]).resolve().relative_to(DATA_DIR)
+        result["download"] = f"/files/{rel.as_posix()}"
+    if result.get("html"):
+        rel = Path(result["html"]).resolve().relative_to(DATA_DIR)
+        result["download_html"] = f"/files/{rel.as_posix()}"
+    return result
+

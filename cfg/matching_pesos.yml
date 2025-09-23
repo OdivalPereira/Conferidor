@@ -1,0 +1,52 @@
+﻿# Matching weights configuration
+limiares:
+  auto_match: 70
+  pendente_min: 50
+  max_candidates: 6
+  janela_default_dias: 3
+
+tolerancias:
+  valor:
+    abs: 0.01
+    pct: 0.002
+  data:
+    janela_dias_por_fonte:
+      ENTRADA: 3
+      SAIDA: 3
+      SERVICO: 5
+
+estrategias:
+  S1: 50
+  S2: 35
+  S3: 25
+  S4: 20
+  S5: 10
+
+bonus:
+  participante_exato: 10
+  participante_nome_fuzzy_alto: 4
+  valor_exato_centavos: 6
+  valor_dentro_tolerancia: 3
+  data_mesma: 4
+  data_ate_1_dia: 6
+  data_ate_3_dias: 3
+  cfop_contas_coerente: 5
+  token_forte: 4
+  mesmo_mes_ref: 2
+  fonte_prioritaria: 1
+
+penalidades:
+  participante_conflito: -15
+  cfop_contas_conflito: -10
+  documento_cancelado: -25
+  valor_fora_tolerancia: -40
+  data_fora_janela: -20
+  duplicado_mesmo_documento: -8
+  modelo_inconsistente: -4
+  situacao_irregular: -6
+
+desempate:
+  prioridade_fonte:
+    ENTRADA: 1.0
+    SAIDA: 1.0
+    SERVICO: 0.9
