@@ -1,0 +1,273 @@
+{
+  "profile_name": "sucessor_csv",
+  "version": "1.0",
+  "source_kind": "csv",
+  "dialect": {
+    "encoding_default": "utf-8-sig",
+    "encoding_candidates": [
+      "utf-8-sig",
+      "latin1",
+      "cp1252"
+    ],
+    "delimiter_default": ";",
+    "delimiter_candidates": [
+      ";",
+      ",",
+      "\t",
+      "|"
+    ],
+    "quotechar": "\"",
+    "has_header": true,
+    "decimal_separators": [
+      ",",
+      "."
+    ],
+    "thousands_separators": [
+      ".",
+      " "
+    ]
+  },
+  "canonical_columns": [
+    "transacao",
+    "chave",
+    "data_br",
+    "debito_cod",
+    "debito_alias",
+    "participante_d_cod",
+    "credito_cod",
+    "credito_alias",
+    "participante_c_cod",
+    "valor_raw",
+    "hist_cod",
+    "numero_docto_raw",
+    "complemento_raw",
+    "status_transacao"
+  ],
+  "rename_rules": [
+    {
+      "pattern": "(?i)^(cd_)?transa[cç][aã]o$",
+      "to": "transacao"
+    },
+    {
+      "pattern": "(?i)^tipo_?lanc$",
+      "to": "transacao"
+    },
+    {
+      "pattern": "(?i)^chave(_lanc)?$",
+      "to": "chave"
+    },
+    {
+      "pattern": "(?i)^id(_lanc)?$",
+      "to": "chave"
+    },
+    {
+      "pattern": "(?i)^data(_lanc|_mov)?$",
+      "to": "data_br"
+    },
+    {
+      "pattern": "(?i)^dt_?lanc$",
+      "to": "data_br"
+    },
+    {
+      "pattern": "(?i)^debito(_?conta)?$",
+      "to": "debito_cod"
+    },
+    {
+      "pattern": "(?i)^conta_?debito$",
+      "to": "debito_cod"
+    },
+    {
+      "pattern": "(?i)^debito_?alias$",
+      "to": "debito_alias"
+    },
+    {
+      "pattern": "(?i)^credito(_?conta)?$",
+      "to": "credito_cod"
+    },
+    {
+      "pattern": "(?i)^conta_?credito$",
+      "to": "credito_cod"
+    },
+    {
+      "pattern": "(?i)^credito_?alias$",
+      "to": "credito_alias"
+    },
+    {
+      "pattern": "(?i)^participante(_?d|_?debito)?(_cod)?$",
+      "to": "participante_d_cod"
+    },
+    {
+      "pattern": "(?i)^fornecedor(_cod)?$",
+      "to": "participante_d_cod"
+    },
+    {
+      "pattern": "(?i)^participante(_?c|_?credito)?(_cod)?$",
+      "to": "participante_c_cod"
+    },
+    {
+      "pattern": "(?i)^cliente(_cod)?$",
+      "to": "participante_c_cod"
+    },
+    {
+      "pattern": "(?i)^(valor|vlr|v_total|v_contabil)$",
+      "to": "valor_raw"
+    },
+    {
+      "pattern": "(?i)^(hist(\\.|orico)?|historico|descricao)$",
+      "to": "hist_cod"
+    },
+    {
+      "pattern": "(?i)^(num(ero)?_?docto|n[ºo]_?docto|documento|doc|nf|fatura)$",
+      "to": "numero_docto_raw"
+    },
+    {
+      "pattern": "(?i)^(compl(emento)?|obs|observacao)$",
+      "to": "complemento_raw"
+    },
+    {
+      "pattern": "(?i)^(status(_transacao)?|situacao)$",
+      "to": "status_transacao"
+    }
+  ],
+  "parse_rules": {
+    "date": {
+      "input_field": "data_br",
+      "output_field": "data_iso",
+      "formats": [
+        "%d/%m/%Y",
+        "%d/%m/%y",
+        "%Y-%m-%d",
+        "%d-%m-%Y"
+      ],
+      "coerce_invalid_to_null": true
+    },
+    "number": {
+      "input_field": "valor_raw",
+      "output_field": "valor_num",
+      "strip": true,
+      "remove_thousands": true,
+      "decimal_comma": true,
+      "fallback_decimal_point": true,
+      "coerce_invalid_to_zero": false,
+      "round_places": 2
+    },
+    "document": {
+      "input_field": "numero_docto_raw",
+      "outputs": {
+        "doc_num_norm": {
+          "regex_keep_digits": true
+        },
+        "doc_serie_norm": {
+          "regex_series": "(?:/|\\s)(\\d{1,3})$"
+        }
+      },
+      "strip_tokens": [
+        "NFE",
+        "NF",
+        "DCTO",
+        "DUP",
+        "FAT",
+        "PED",
+        "DOC",
+        "CTE",
+        "XML",
+        "CHAVE"
+      ],
+      "uppercase": true
+    },
+    "participants": {
+      "fields": [
+        "participante_d_cod",
+        "participante_c_cod"
+      ],
+      "normalize": {
+        "upper": true,
+        "strip": true,
+        "remove_accents": true
+      }
+    },
+    "text_cleanup": {
+      "fields": [
+        "hist_cod",
+        "complemento_raw"
+      ],
+      "upper": true,
+      "collapse_spaces": true,
+      "trim_punctuation": true
+    }
+  },
+  "validators": {
+    "required_columns": [
+      "data_br",
+      "valor_raw",
+      "numero_docto_raw"
+    ],
+    "at_least_one_participant": [
+      "participante_d_cod",
+      "participante_c_cod"
+    ],
+    "rules": [
+      {
+        "name": "valor_num_non_negative",
+        "expr": "valor_num IS NULL OR valor_num >= 0"
+      },
+      {
+        "name": "doc_num_norm_minlen",
+        "expr": "length(doc_num_norm) >= 1"
+      }
+    ]
+  },
+  "output_mapping_to_staging": {
+    "table": "stg_sucessor_lanc",
+    "columns": {
+      "chave": "coalesce(chave, '')",
+      "transacao": "coalesce(transacao, '')",
+      "data_br": "data_br",
+      "data_iso": "data_iso",
+      "debito_cod": "debito_cod",
+      "debito_alias": "debito_alias",
+      "participante_d_cod": "participante_d_cod",
+      "credito_cod": "credito_cod",
+      "credito_alias": "credito_alias",
+      "participante_c_cod": "participante_c_cod",
+      "valor_raw": "valor_raw",
+      "valor_num": "valor_num",
+      "hist_cod": "hist_cod",
+      "numero_docto_raw": "numero_docto_raw",
+      "complemento_raw": "complemento_raw",
+      "status_transacao": "status_transacao",
+      "raw_json": "raw_json"
+    }
+  },
+  "profiling": {
+    "sample_rows": 200,
+    "null_like_values": [
+      "",
+      "NULL",
+      "N/A",
+      "-",
+      "--"
+    ],
+    "warn_on_unknown_columns": true
+  },
+  "test_samples": [
+    {
+      "input": {
+        "Data": "03/09/2025",
+        "Débito": "1.1.1.01.0001",
+        "Crédito": "3.1.1.01.0001",
+        "Participante D": "000123",
+        "Nº Docto": "NFE 14959/002",
+        "Histórico": "PAGTO NFE 14959/002 DCTO14959 PIX",
+        "Valor": "1.234,56",
+        "Status": "ATIVO"
+      },
+      "expected_after_parse": {
+        "data_iso": "2025-09-03",
+        "doc_num_norm": "14959",
+        "doc_serie_norm": "2",
+        "valor_num": 1234.56
+      }
+    }
+  ]
+}

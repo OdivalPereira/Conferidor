@@ -1,0 +1,307 @@
+# issues_rules.yml — 26/28
+# Regras de "achados" (issues) para qualificar OK/ALERTA/DIVERGÊNCIA após o matching.
+# Estas regras são aplicadas linha-a-linha sobre a grid consolidada (ex.: ui_grid.jsonl).
+# O motor (a ser implementado) deve suportar os operadores descritos em `dsl.operators`.
+#
+# Campos de entrada mais comuns por linha:
+#   status           → classificação do matcher (OK/ALERTA/DIVERGENCIA/SEM_FONTE/SEM_SUCESSOR)
+#   strategy         → S1..S5
+#   score            → 0..100
+#   delta.valor      → S.valor − F.valor (número)
+#   delta.dias       → |S.data − F.data| em dias (número)
+#   fonte_tipo       → ENTRADA | SAIDA | SERVICO
+#   F.*              → colunas da fonte (doc, valor, data, participante, cfop, situacao, ...)
+#   S.*              → colunas do Sucessor (debito, credito, part_d, part_c, doc, valor, historico, ...)
+#   motivos          → texto com evidências (opcional)
+#
+# Convenção de severidade:
+#   CRITICO > ALTO > MEDIO > BAIXO
+#
+version: 1
+
+dsl:
+  operators: [eq, ne, lt, lte, gt, gte, abs_gt, abs_gte, in, not_in, regex, startswith, endswith, exists]
+  notes: |
+    - As condições em `when.all` são AND; em `when.any` são OR.
+    - `abs_gt/abs_gte` aplicam valor absoluto ao campo (ex.: delta.valor).
+    - Ex.: {field: "status", op: "eq", value: "OK"}
+    - Campos inexistentes devem ser tratados como nulos pelo motor.
+
+defaults:
+  tol_valor_abs: 0.01          # R$ 0,01
+  tol_valor_pct: 0.002         # 0,2%
+  janela_dias: 3
+  limiar_auto: 70
+
+rules:
+
+  - id: R001
+    title: "Valor fora da tolerância"
+    severity: "ALTO"
+    when:
+      all:
+        - { field: "status", op: "ne", value: "SEM_FONTE" }
+        - { field: "status", op: "ne", value: "SEM_SUCESSOR" }
+        - { field: "delta.valor", op: "abs_gt", value: 0.01 } # afinado pelo motor com pct também
+    emit:
+      code: "VALOR_FORA_TOL"
+      message: "Diferença de valor {delta.valor} supera a tolerância para o documento {F.doc or S.doc}."
+      suggest: "Revisar descontos/encargos/centavos; conferir contas e CFOP."
+      mark_status: "DIVERGENCIA"
+
+  - id: R002
+    title: "Data fora da janela"
+    severity: "MEDIO"
+    when:
+      all:
+        - { field: "status", op: "ne", value: "SEM_FONTE" }
+        - { field: "status", op: "ne", value: "SEM_SUCESSOR" }
+        - { field: "delta.dias", op: "gt", value: 3 }
+    emit:
+      code: "DATA_FORA_JANELA"
+      message: "A diferença de datas ({delta.dias} dias) excede a janela padrão entre Sucessor e {fonte_tipo}."
+      suggest: "Confirmar data de emissão/entrada/competência e reprocessar se necessário."
+      mark_status: "ALERTA"
+
+  - id: R003
+    title: "Participante divergente"
+    severity: "ALTO"
+    when:
+      any:
+        - { field: "S.part_d", op: "exists", value: true }
+        - { field: "S.part_c", op: "exists", value: true }
+    and:
+      any:
+        - { field: "F.participante", op: "exists", value: true }
+    but:
+      all:
+        - { field: "status", op: "ne", value: "SEM_FONTE" }
+        - { field: "status", op: "ne", value: "SEM_SUCESSOR" }
+        - { field: "strategy", op: "ne", value: "S5" }  # S5 depende de pistas; ser mais tolerante
+        - { field: "score", op: "lt", value: 90 }       # se score muito alto, pode ser exceção válida
+    emit:
+      code: "PARTICIPANTE_DIVERGENTE"
+      message: "Participante no Sucessor difere da fonte ({F.participante})."
+      suggest: "Checar código do parceiro e mapeamento Fornecedores/Clientes."
+      mark_status: "DIVERGENCIA"
+
+  - id: R004
+    title: "CFOP × Contas incoerente"
+    severity: "MEDIO"
+    when:
+      all:
+        - { field: "F.cfop", op: "exists", value: true }
+        - { field: "S.debito", op: "exists", value: true }
+        - { field: "S.credito", op: "exists", value: true }
+    emit:
+      code: "CFOP_CONTAS_INCOERENTE"
+      message: "CFOP {F.cfop} sugere contas diferentes das utilizadas (D: {S.debito}, C: {S.credito})."
+      suggest: "Conferir matriz cfop_expectativas.csv e aliases de conta."
+      mark_status: "ALERTA"
+
+  - id: R005
+    title: "Documento cancelado com lançamento ativo"
+    severity: "CRITICO"
+    when:
+      all:
+        - { field: "F.situacao", op: "in", value: ["CANCELADO","CANCELADA","CANCEL"] }
+        - { field: "status", op: "ne", value: "SEM_SUCESSOR" }
+    emit:
+      code: "CANCELADO_COM_LANCAMENTO"
+      message: "Documento {F.doc} consta cancelado na fonte, porém há lançamento no Sucessor."
+      suggest: "Estornar/ajustar lançamento contábil."
+      mark_status: "DIVERGENCIA"
+
+  - id: R006
+    title: "Sem fonte para lançamento do Sucessor"
+    severity: "MEDIO"
+    when:
+      all:
+        - { field: "status", op: "eq", value: "SEM_FONTE" }
+    emit:
+      code: "SEM_FONTE"
+      message: "Lançamento do Sucessor sem contrapartida na(s) fonte(s)."
+      suggest: "Verificar CSVs de origem do período e filtros de importação."
+      mark_status: "ALERTA"
+
+  - id: R007
+    title: "Sem Sucessor para documento da fonte"
+    severity: "MEDIO"
+    when:
+      all:
+        - { field: "status", op: "eq", value: "SEM_SUCESSOR" }
+    emit:
+      code: "SEM_SUCESSOR"
+      message: "Documento da fonte sem reflexo no Sucessor."
+      suggest: "Investigar processo de lançamento e reprocessar se necessário."
+      mark_status: "ALERTA"
+
+  - id: R008
+    title: "Possível duplicidade no Sucessor"
+    severity: "ALTO"
+    when:
+      all:
+        - { field: "status", op: "ne", value: "SEM_FONTE" }
+        - { field: "S.doc", op: "exists", value: true }
+    emit:
+      code: "DUPLICIDADE_SUC"
+      message: "Mesmo nº documento no Sucessor aparece em múltiplas linhas; revisar consolidação."
+      suggest: "Conferir regra de agregação/parcelas e chaves de bloqueio."
+      mark_status: "ALERTA"
+
+  - id: R009
+    title: "ST: débito de ICMS indevido"
+    severity: "ALTO"
+    when:
+      all:
+        - { field: "fonte_tipo", op: "eq", value: "SAIDA" }
+        - { field: "F.cfop", op: "regex", value: "^54|^64" }
+    emit:
+      code: "ST_ICMS_INDEVIDO"
+      message: "CFOP de ST ({F.cfop}) não deveria gerar débito de ICMS no Sucessor."
+      suggest: "Revisar contas de impostos para operações com ST."
+      mark_status: "ALERTA"
+
+  - id: R010
+    title: "Crédito de ICMS ausente em compras com crédito"
+    severity: "MEDIO"
+    when:
+      all:
+        - { field: "fonte_tipo", op: "eq", value: "ENTRADA" }
+        - { field: "F.cfop", op: "regex", value: "^(11|21)0[12]$" }   # 1101/1102/2101/2102
+    emit:
+      code: "ICMS_CREDITO_AUSENTE"
+      message: "Compras com CFOP {F.cfop} normalmente geram 'ICMS a Recuperar'."
+      suggest: "Verificar se a conta de ICMS Crédito foi apropriada."
+      mark_status: "ALERTA"
+
+  - id: R011
+    title: "Imobilizado possivelmente lançado em despesa"
+    severity: "MEDIO"
+    when:
+      all:
+        - { field: "fonte_tipo", op: "eq", value: "ENTRADA" }
+        - { field: "F.cfop", op: "in", value: ["1551","1552"] }
+    emit:
+      code: "IMOBILIZADO_EM_DESPESA"
+      message: "CFOP de imobilizado {F.cfop} deveria ir ao Imobilizado/CIAP; revisar contas de despesa."
+      suggest: "Ajustar para contas do ativo imobilizado e CIAP quando aplicável."
+      mark_status: "ALERTA"
+
+  - id: R012
+    title: "Serviço ISS lançado em contas de ICMS"
+    severity: "MEDIO"
+    when:
+      all:
+        - { field: "fonte_tipo", op: "eq", value: "SERVICO" }
+        - { field: "F.cfop", op: "exists", value: true }
+    emit:
+      code: "ISS_EM_ICMS"
+      message: "Documento de serviço possivelmente classificado em contas de ICMS (ver D/C)."
+      suggest: "Revisar classificação tributária (ISS × ICMS) e contas de impostos."
+      mark_status: "ALERTA"
+
+  - id: R013
+    title: "Devolução não estornada adequadamente"
+    severity: "MEDIO"
+    when:
+      any:
+        - { field: "F.cfop", op: "regex", value: "^(12|52|62)0[12]$" } # devoluções típicas
+    emit:
+      code: "DEVOLUCAO_INCOMPLETA"
+      message: "CFOP de devolução {F.cfop} mas o estorno de estoque/receita parece ausente."
+      suggest: "Conferir contas de contrapartida e valores de impostos."
+      mark_status: "ALERTA"
+
+  - id: R014
+    title: "Débito/Crédito possivelmente invertidos"
+    severity: "ALTO"
+    when:
+      all:
+        - { field: "status", op: "ne", value: "SEM_FONTE" }
+        - { field: "fonte_tipo", op: "in", value: ["ENTRADA","SAIDA"] }
+    emit:
+      code: "DC_INVERTIDO"
+      message: "Sinais ou posição D/C divergentes do esperado para {fonte_tipo}."
+      suggest: "Revisar lançamento contábil (lado do débito/crédito)."
+      mark_status: "DIVERGENCIA"
+
+  - id: R015
+    title: "Agregação de parcelas excede tolerância"
+    severity: "MEDIO"
+    when:
+      all:
+        - { field: "status", op: "ne", value: "SEM_FONTE" }
+        - { field: "motivos", op: "regex", value: "(?i)agrega[cç][aã]o|parcelas" }
+    emit:
+      code: "PARCELAS_FORA_TOL"
+      message: "Somatório de parcelas diverge do valor do documento além da tolerância."
+      suggest: "Recalcular agrupamento/juros/descontos."
+      mark_status: "ALERTA"
+
+  - id: R016
+    title: "CFOP ausente ou inválido"
+    severity: "MEDIO"
+    when:
+      any:
+        - { field: "F.cfop", op: "eq", value: "" }
+        - { field: "F.cfop", op: "regex", value: "^[^0-9]" }
+        - { field: "F.cfop", op: "ne", value: null }
+    emit:
+      code: "CFOP_INVALIDO"
+      message: "CFOP ausente/irregular na fonte; regra de conferência CFOP×Contas fica comprometida."
+      suggest: "Ajustar CFOP na origem."
+      mark_status: "ALERTA"
+
+  - id: R017
+    title: "Cancelado sem estorno contábil"
+    severity: "CRITICO"
+    when:
+      all:
+        - { field: "F.situacao", op: "in", value: ["CANCELADO","CANCELADA","CANCEL"] }
+        - { field: "status", op: "ne", value: "SEM_FONTE" }
+        - { field: "S.valor", op: "exists", value: true }
+    emit:
+      code: "CANCELADO_SEM_ESTORNO"
+      message: "Fonte indica cancelamento, mas há valor contabilizado."
+      suggest: "Gerar estorno no Sucessor."
+      mark_status: "DIVERGENCIA"
+
+  - id: R018
+    title: "Participante ausente no Sucessor"
+    severity: "MEDIO"
+    when:
+      all:
+        - { field: "F.participante", op: "exists", value: true }
+        - { field: "S.part_d", op: "ne", value: null }
+        - { field: "S.part_c", op: "ne", value: null }
+    emit:
+      code: "PARTICIPANTE_AUSENTE"
+      message: "Documento possui participante na fonte, mas o lançamento não traz participante no Sucessor."
+      suggest: "Preencher participante em D ou C conforme a natureza da operação."
+      mark_status: "ALERTA"
+
+  - id: R019
+    title: "Competência divergente do mês de emissão"
+    severity: "BAIXO"
+    when:
+      all:
+        - { field: "delta.dias", op: "gt", value: 31 }
+    emit:
+      code: "COMPETENCIA_DIVERGENTE"
+      message: "Competência/registro contábil distante da emissão além de 31 dias."
+      suggest: "Validar política de competência e datas utilizadas."
+      mark_status: "ALERTA"
+
+  - id: R020
+    title: "Retenções de serviço não refletidas"
+    severity: "MEDIO"
+    when:
+      all:
+        - { field: "fonte_tipo", op: "eq", value: "SERVICO" }
+        - { field: "motivos", op: "regex", value: "(?i)iss|retenc[aã]o|inss|irrf" }
+    emit:
+      code: "RETENCOES_AUSENTES"
+      message: "Indícios de retenções (ISS/INSS/IRRF) não refletidas nas contas."
+      suggest: "Ajustar lançamentos das retenções e recolhimentos."
+      mark_status: "ALERTA"

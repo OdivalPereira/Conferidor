@@ -1,0 +1,456 @@
+{
+  "version": 1,
+  "primaryKey": "id",
+  "defaultPageSize": 100,
+  "pagination": {
+    "pageSizes": [
+      50,
+      100,
+      200,
+      500
+    ]
+  },
+  "locale": "pt-BR",
+  "numberFormat": {
+    "money": {
+      "style": "currency",
+      "currency": "BRL",
+      "minimumFractionDigits": 2
+    }
+  },
+  "dateFormat": "dd/MM/yyyy",
+  "columns": [
+    {
+      "id": "status",
+      "label": "Status",
+      "type": "badge",
+      "width": 100,
+      "pinned": "left",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "strategy",
+      "label": "Regra",
+      "type": "text",
+      "width": 80,
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "score",
+      "label": "Score",
+      "type": "number",
+      "width": 90,
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "S.data",
+      "label": "Data (S)",
+      "type": "date",
+      "width": 110,
+      "group": "Sucessor",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "S.debito",
+      "label": "Débito",
+      "type": "text",
+      "width": 230,
+      "group": "Sucessor",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "S.credito",
+      "label": "Crédito",
+      "type": "text",
+      "width": 230,
+      "group": "Sucessor",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "S.part_d",
+      "label": "Part. D",
+      "type": "text",
+      "width": 160,
+      "group": "Sucessor",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "S.part_c",
+      "label": "Part. C",
+      "type": "text",
+      "width": 160,
+      "group": "Sucessor",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "S.doc",
+      "label": "Nº Docto (S)",
+      "type": "text",
+      "width": 150,
+      "group": "Sucessor",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "S.valor",
+      "label": "Valor (S)",
+      "type": "money",
+      "width": 130,
+      "group": "Sucessor",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "S.historico",
+      "label": "Histórico",
+      "type": "text",
+      "width": 380,
+      "group": "Sucessor",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "fonte_tipo",
+      "label": "Fonte",
+      "type": "text",
+      "width": 110,
+      "group": "Fonte",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "F.data",
+      "label": "Data (F)",
+      "type": "date",
+      "width": 110,
+      "group": "Fonte",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "F.doc",
+      "label": "Nº Docto (F)",
+      "type": "text",
+      "width": 150,
+      "group": "Fonte",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "F.participante",
+      "label": "Participante (F)",
+      "type": "text",
+      "width": 210,
+      "group": "Fonte",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "F.valor",
+      "label": "Valor (F)",
+      "type": "money",
+      "width": 130,
+      "group": "Fonte",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "F.cfop",
+      "label": "CFOP",
+      "type": "text",
+      "width": 100,
+      "group": "Fonte",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "F.situacao",
+      "label": "Situação",
+      "type": "text",
+      "width": 130,
+      "group": "Fonte",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "delta.valor",
+      "label": "Δ Valor",
+      "type": "money",
+      "width": 130,
+      "group": "Diferenças",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "delta.dias",
+      "label": "Δ Dias",
+      "type": "number",
+      "width": 90,
+      "group": "Diferenças",
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "motivos",
+      "label": "Motivos",
+      "type": "text",
+      "width": 380,
+      "sortable": true,
+      "filter": true
+    },
+    {
+      "id": "tags",
+      "label": "Tags",
+      "type": "array",
+      "width": 280,
+      "sortable": false,
+      "filter": true
+    }
+  ],
+  "rowStyleRules": [
+    {
+      "when": {
+        "eq": [
+          "status",
+          "OK"
+        ]
+      },
+      "style": {
+        "backgroundColor": "#d1fae5"
+      }
+    },
+    {
+      "when": {
+        "eq": [
+          "status",
+          "ALERTA"
+        ]
+      },
+      "style": {
+        "backgroundColor": "#fef3c7"
+      }
+    },
+    {
+      "when": {
+        "eq": [
+          "status",
+          "DIVERGENCIA"
+        ]
+      },
+      "style": {
+        "backgroundColor": "#fee2e2"
+      }
+    },
+    {
+      "when": {
+        "in": [
+          "status",
+          [
+            "SEM_FONTE",
+            "SEM_SUCESSOR"
+          ]
+        ]
+      },
+      "style": {
+        "backgroundColor": "#e5e7eb"
+      }
+    },
+    {
+      "when": {
+        "gte": [
+          "score",
+          70
+        ]
+      },
+      "style": {
+        "outline": "2px solid #2563eb"
+      }
+    }
+  ],
+  "badgeMap": {
+    "status": {
+      "OK": {
+        "color": "#16a34a",
+        "textColor": "#052e16"
+      },
+      "ALERTA": {
+        "color": "#f59e0b",
+        "textColor": "#451a03"
+      },
+      "DIVERGENCIA": {
+        "color": "#dc2626",
+        "textColor": "#450a0a"
+      },
+      "SEM_FONTE": {
+        "color": "#6b7280",
+        "textColor": "#111827"
+      },
+      "SEM_SUCESSOR": {
+        "color": "#6b7280",
+        "textColor": "#111827"
+      }
+    }
+  },
+  "defaultSort": [
+    {
+      "id": "status",
+      "dir": "asc"
+    },
+    {
+      "id": "score",
+      "dir": "desc"
+    }
+  ],
+  "quickFilters": [
+    {
+      "id": "only_ok",
+      "label": "Somente OK",
+      "filters": [
+        {
+          "field": "status",
+          "op": "=",
+          "value": "OK"
+        }
+      ]
+    },
+    {
+      "id": "only_alerta",
+      "label": "Somente Alertas",
+      "filters": [
+        {
+          "field": "status",
+          "op": "=",
+          "value": "ALERTA"
+        }
+      ]
+    },
+    {
+      "id": "only_diverg",
+      "label": "Somente Divergências",
+      "filters": [
+        {
+          "field": "status",
+          "op": "=",
+          "value": "DIVERGENCIA"
+        }
+      ]
+    },
+    {
+      "id": "only_sem_fonte",
+      "label": "Sem Fonte",
+      "filters": [
+        {
+          "field": "status",
+          "op": "=",
+          "value": "SEM_FONTE"
+        }
+      ]
+    },
+    {
+      "id": "only_sem_sucessor",
+      "label": "Sem Sucessor",
+      "filters": [
+        {
+          "field": "status",
+          "op": "=",
+          "value": "SEM_SUCESSOR"
+        }
+      ]
+    },
+    {
+      "id": "entrada_diverg",
+      "label": "Divergências (Entradas)",
+      "filters": [
+        {
+          "field": "status",
+          "op": "=",
+          "value": "DIVERGENCIA"
+        },
+        {
+          "field": "fonte_tipo",
+          "op": "=",
+          "value": "ENTRADA"
+        }
+      ]
+    },
+    {
+      "id": "saida_diverg",
+      "label": "Divergências (Saídas)",
+      "filters": [
+        {
+          "field": "status",
+          "op": "=",
+          "value": "DIVERGENCIA"
+        },
+        {
+          "field": "fonte_tipo",
+          "op": "=",
+          "value": "SAIDA"
+        }
+      ]
+    },
+    {
+      "id": "servico_diverg",
+      "label": "Divergências (Serviços)",
+      "filters": [
+        {
+          "field": "status",
+          "op": "=",
+          "value": "DIVERGENCIA"
+        },
+        {
+          "field": "fonte_tipo",
+          "op": "=",
+          "value": "SERVICO"
+        }
+      ]
+    },
+    {
+      "id": "cfop_5102",
+      "label": "CFOP 5102",
+      "filters": [
+        {
+          "field": "F.cfop",
+          "op": "=",
+          "value": "5102"
+        }
+      ]
+    }
+  ],
+  "tooltips": {
+    "status": "Classificação após a regra de matching e tolerâncias",
+    "strategy": "Regra aplicada (S1..S5)",
+    "score": "Pontuação ponderada (>=70 auto-match)",
+    "delta.valor": "Diferença S.valor − F.valor",
+    "delta.dias": "Diferença absoluta de dias entre S.data e F.data"
+  },
+  "hotkeys": {
+    "openInspector": "Enter",
+    "markOk": "A",
+    "markDiverg": "X",
+    "focusSearch": "/"
+  },
+  "export": {
+    "xlsx": {
+      "sheetOrder": [
+        "OK",
+        "Alertas",
+        "Divergencias",
+        "Sem Fonte",
+        "Sem Sucessor"
+      ]
+    },
+    "pdf": {
+      "includeCharts": true,
+      "topDivergencias": 50
+    }
+  }
+}

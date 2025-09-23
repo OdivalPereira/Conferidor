@@ -1,0 +1,243 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "01: loader",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+      },
+      "args": [
+        "src/loader.py",
+        "--inputs",
+        "dados/sucessor.csv",
+        "dados/suprema_entradas.csv",
+        "dados/suprema_saidas.csv",
+        "dados/suprema_servicos.csv",
+        "dados/fornecedores.csv",
+        "dados/plano_contas.csv",
+        "--profiles",
+        "cfg/profiles_map.yml",
+        "--staging",
+        "out/staging"
+      ],
+      "options": {
+        "env": {
+          "PYTHONUTF8": "1"
+        }
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "02: normalizer",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+      },
+      "args": [
+        "src/normalizer.py",
+        "--staging",
+        "out/staging",
+        "--out",
+        "out/normalized",
+        "--profiles",
+        "cfg/profiles_map.yml"
+      ],
+      "options": {
+        "env": {
+          "PYTHONUTF8": "1"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "03: matcher",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+      },
+      "args": [
+        "src/matcher.py",
+        "--sucessor",
+        "out/normalized/sucessor.parquet",
+        "--entradas",
+        "out/normalized/entradas.parquet",
+        "--saidas",
+        "out/normalized/saidas.parquet",
+        "--servicos",
+        "out/normalized/servicos.parquet",
+        "--fornecedores",
+        "out/normalized/fornecedores.parquet",
+        "--plano-contas",
+        "out/normalized/plano_contas.parquet",
+        "--cfg-pesos",
+        "cfg/matching_pesos.yml",
+        "--cfg-tokens",
+        "cfg/regex_tokens.yml",
+        "--cfop-map",
+        "cfg/cfop_expectativas.csv",
+        "--out",
+        "out/match"
+      ],
+      "options": {
+        "env": {
+          "PYTHONUTF8": "1"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "04: issues",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+      },
+      "args": [
+        "src/issues_engine.py",
+        "--grid",
+        "out/match/reconc_grid.csv",
+        "--rules",
+        "cfg/issues_rules.yml",
+        "--out-issues",
+        "out/match/issues.jsonl",
+        "--out-grid",
+        "out/match/reconc_grid_issues.csv"
+      ],
+      "options": {
+        "env": {
+          "PYTHONUTF8": "1"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "05: dataset UI",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+      },
+      "args": [
+        "src/ui_dataset_builder.py",
+        "--grid",
+        "out/match/reconc_grid_issues.csv",
+        "--meta",
+        "out/ui_meta.json",
+        "--schema",
+        "cfg/ui_schema.json",
+        "--out-jsonl",
+        "out/ui_grid.jsonl"
+      ],
+      "options": {
+        "env": {
+          "PYTHONUTF8": "1"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "UI server (uvicorn)",
+      "type": "shell",
+      "options": {
+        "env": {
+          "DATA_DIR": "out",
+          "PYTHONUTF8": "1"
+        }
+      },
+      "command": "${workspaceFolder}/.venv/bin/uvicorn",
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\uvicorn.exe"
+      },
+      "args": [
+        "src.ui_server:app",
+        "--port",
+        "8000",
+        "--reload"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Relat\u00f3rio XLSX",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+      },
+      "args": [
+        "src/export_xlsx.py",
+        "--grid",
+        "out/match/reconc_grid.csv",
+        "--sem-fonte",
+        "out/match/reconc_sem_fonte.csv",
+        "--sem-sucessor",
+        "out/match/reconc_sem_sucessor.csv",
+        "--out",
+        "out/relatorio_conferencia.xlsx"
+      ],
+      "options": {
+        "env": {
+          "PYTHONUTF8": "1"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Relat\u00f3rio PDF",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "windows": {
+        "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+      },
+      "args": [
+        "src/export_pdf.py",
+        "--grid",
+        "out/match/reconc_grid.csv",
+        "--out",
+        "out/relatorio_conferencia.pdf",
+        "--cliente",
+        "Cliente X",
+        "--periodo",
+        "08/2025"
+      ],
+      "options": {
+        "env": {
+          "PYTHONUTF8": "1"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "00: pipeline (1\u21925)",
+      "dependsOn": [
+        "01: loader",
+        "02: normalizer",
+        "03: matcher",
+        "04: issues",
+        "05: dataset UI"
+      ],
+      "dependsOrder": "sequence"
+    },
+    {
+      "label": "Clean out/",
+      "type": "shell",
+      "command": "bash",
+      "windows": {
+        "command": "powershell"
+      },
+      "args": [
+        "-lc",
+        "rm -rf out && mkdir -p out"
+      ],
+      "windowsArgs": [
+        "-NoProfile",
+        "-Command",
+        "Remove-Item -Recurse -Force out; New-Item -ItemType Directory -Path out | Out-Null"
+      ]
+    }
+  ]
+}

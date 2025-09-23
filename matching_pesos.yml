@@ -1,0 +1,80 @@
+# matching_pesos.yml — 19/28
+# Configura os pesos/limiares do matcher (S1–S5) e tolerâncias.
+# Valores foram calibrados para contabilidade brasileira (centavos, janela curta).
+# Edite por cliente/período quando necessário.
+
+limiares:
+  auto_match: 70          # >= vira OK automaticamente
+  pendente_min: 50        # 50–69: ALERTA (revisão humana)
+  max_candidates: 6       # por linha do Sucessor
+  janela_default_dias: 3  # fallback se não houver granularidade por fonte
+
+tolerancias:
+  valor:
+    abs: 0.01             # R$ 0,01
+    pct: 0.002            # 0,2% (0.002 = 0.2%)
+  data:
+    janela_dias_por_fonte:
+      ENTRADA: 3
+      SAIDA: 3
+      SERVICO: 5
+  parcelas:
+    permitir_agregacao: true
+    tol_agregacao_abs: 0.02    # soma de parcelas vs. valor do documento
+    tol_agregacao_pct: 0.003   # 0,3%
+
+estrategias:
+  S1: 50    # doc + participante + valor
+  S2: 35    # doc + participante + data (janela)
+  S3: 25    # doc + valor + data
+  S4: 20    # valor + participante + data
+  S5: 10    # tokens (histórico) + valor + data
+  S6: 0     # validação CFOP×contas (não gera match por si só)
+
+bonus:
+  participante_exato: 10
+  participante_nome_fuzzy_alto: 4    # reservado para futura similaridade por nome
+  valor_exato_centavos: 6
+  valor_dentro_tolerancia: 3
+  data_mesma: 4
+  data_ate_1_dia: 6
+  data_ate_3_dias: 3
+  cfop_contas_coerente: 5
+  token_forte: 4
+  mesmo_mes_ref: 2
+  fonte_prioritaria: 2
+
+penalidades:
+  participante_conflito: -15
+  cfop_contas_conflito: -10
+  documento_cancelado: -25
+  valor_fora_tolerancia: -40
+  data_fora_janela: -20
+  duplicado_mesmo_documento: -8
+  modelo_inconsistente: -4
+  situacao_irregular: -6
+
+desempate:
+  ordem: [delta_valor_abs, delta_dias_abs, prioridade_fonte, score]
+  pesos: { delta_valor_abs: 0.70, delta_dias_abs: 0.20, prioridade_fonte: 0.10 }
+  prioridade_fonte: { ENTRADA: 1.0, SAIDA: 1.0, SERVICO: 0.9 }
+
+ajustes_por_conta:  # regras finas
+  - conta_alias_regex: ".*JUROS.*"
+    tol_valor_pct: 0.01   # 1% para resíduos de juros/encargos
+  - conta_alias_regex: ".*DESCONTO.*"
+    tol_valor_pct: 0.01
+  - conta_alias_regex: ".*PIX.*"
+    janela_dias: 1        # pagamentos instantâneos: janela mais curta
+  - conta_alias_regex: ".*CARTAO.*|.*CIELO.*|.*REDE.*"
+    janela_dias: 2        # compensação D+1/D+2
+
+# Ajustes específicos por CFOP (exemplo; opcional)
+ajustes_por_cfop:
+  "1102": { bonus_cfop: 2 }   # compra para revenda
+  "1556": { penalidade_incoerencia: -5 }  # industrialização por encomenda
+  "5102": { bonus_cfop: 2 }   # venda de mercadoria
+  "5405": { penalidade_incoerencia: -5 }  # ST — conferir impostos
+
+# Observação: o matcher aceita ausência deste arquivo e usa defaults internos,
+# mas é recomendável versionar este YAML por cliente.

@@ -1,0 +1,55 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug UI Server",
+      "type": "python",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "src.ui_server:app",
+        "--port",
+        "8000",
+        "--reload"
+      ],
+      "env": {
+        "DATA_DIR": "out",
+        "PYTHONUTF8": "1"
+      },
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Debug matcher (single run)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/matcher.py",
+      "args": [
+        "--sucessor",
+        "out/normalized/sucessor.parquet",
+        "--entradas",
+        "out/normalized/entradas.parquet",
+        "--saidas",
+        "out/normalized/saidas.parquet",
+        "--servicos",
+        "out/normalized/servicos.parquet",
+        "--fornecedores",
+        "out/normalized/fornecedores.parquet",
+        "--plano-contas",
+        "out/normalized/plano_contas.parquet",
+        "--cfg-pesos",
+        "cfg/matching_pesos.yml",
+        "--cfg-tokens",
+        "cfg/regex_tokens.yml",
+        "--cfop-map",
+        "cfg/cfop_expectativas.csv",
+        "--out",
+        "out/match"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}

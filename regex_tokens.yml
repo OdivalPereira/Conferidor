@@ -1,0 +1,53 @@
+# regex_tokens.yml — 20/28
+# Catálogo de regex para extrair tokens úteis do histórico/descrição.
+# Todas as regex são aplicadas com IGNORECASE. Cada chave lista UM padrão (string).
+# Se você quiser desativar algum, basta removê-lo ou comentar a linha.
+
+TOKENS:
+  # NF-e número/série em textos tipo "NF 14959/2", "NFE 0014959-002"
+  NFE_NUM_SERIE: '\b(?:NF|NFE)\s*(\d{1,9})\s*[\/\-]\s*(\d{1,4})\b'
+
+  # Chave completa de NF-e (44 dígitos consecutivos)
+  NFE_CHAVE44: '\b\d{44}\b'
+
+  # NFS-e: RPS/Nota de Serviço
+  NFSE_RPS: '\bRPS\s*(\d{1,12})\b'
+
+  # Conhecimento/CT-e número/série
+  CTE_NUM_SERIE: '\b(?:CTE|CT\-E)\s*(\d{1,9})\s*[\/\-]\s*(\d{1,4})\b'
+
+  # NFC-e simplificada (número/série)
+  NFCE_NUM_SERIE: '\bNFC?E\s*(\d{1,9})\s*[\/\-]\s*(\d{1,4})\b'
+
+  # Documento genérico "DCTO123456", comum em extratos bancários/processados
+  DCTO: '\bDCTO\s*(\d{1,15})\b'
+
+  # Fatura/Duplicata
+  FATURA: '\b(?:FAT|FATURA|DUP|DUPLICATA)\s*(\d{1,12})\b'
+
+  # Pedido/Ordem (às vezes aparece no histórico e ajuda no match)
+  PEDIDO: '\b(?:PED|PEDIDO|ORDEM)\s*(\d{1,12})\b'
+
+  # PIX: E2E ou TXID (alfanumérico longo). Captura o identificador.
+  PIX: '\b(?:E2E|TXID)\s*[:\-]?\s*([A-Z0-9]{10,36})\b'
+
+  # TED/DOC com referência numérica
+  TED_DOC: '\b(?:TED|DOC|TEF)\s*[:\-]?\s*(\d{6,20})\b'
+
+  # Cartão (adquirentes/NSU/autorização). Captura a marca + id
+  CARTAO_ADQ: '\b(?:NSU|CIELO|REDE|GETNET|STONE|PAGSEGURO|SAFRA|ELAVON)\s*[:\-]?\s*([A-Z0-9]{4,12})\b'
+
+  # Boleto — Nosso Número
+  BOLETO_NOSSO: '\bNOSSO\s*(?:N[ÚU]MERO|NUMERO)\s*[:\-]?\s*(\d{5,20})\b'
+
+  # Boleto — Linha digitável (47~48 dígitos com espaços)
+  BOLETO_LINHA: '\b\d{5}\s\d{5}\s\d{5}\s\d{6}\s\d{5}\s\d{6}\s\d{1}\b'
+
+  # CNPJ (14 dígitos). Útil como reforço de participante no histórico.
+  CNPJ: '\b\d{14}\b'
+
+  # Placa de veículo (padrão Mercosul/antigo) — útil para fretes/CT-e
+  PLACA: '\b([A-Z]{3}\d{4}|[A-Z]{3}\d[A-Z]\d{2})\b'
+
+  # Agência/Conta (parcial) — pode ajudar em casamentos bancários específicos
+  AG_CC: '\bAG\s*\d{1,6}\s*\/?\s*CC\s*\d{1,12}\b'

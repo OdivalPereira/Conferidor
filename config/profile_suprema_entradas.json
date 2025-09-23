@@ -1,0 +1,359 @@
+{
+  "profile_name": "suprema_entradas_csv",
+  "version": "1.0",
+  "source_kind": "csv",
+  "dialect": {
+    "encoding_default": "utf-8-sig",
+    "encoding_candidates": [
+      "utf-8-sig",
+      "latin1",
+      "cp1252"
+    ],
+    "delimiter_default": ";",
+    "delimiter_candidates": [
+      ";",
+      ",",
+      "\t",
+      "|"
+    ],
+    "quotechar": "\"",
+    "has_header": true,
+    "decimal_separators": [
+      ",",
+      "."
+    ],
+    "thousands_separators": [
+      ".",
+      " "
+    ]
+  },
+  "canonical_columns": [
+    "chave",
+    "fornecedor_cod",
+    "fornecedor_nome",
+    "data_entrada_br",
+    "data_emissao_br",
+    "documento_raw",
+    "cfop",
+    "modelo",
+    "especie",
+    "condicao_pagto",
+    "valor_contabil_raw",
+    "debito_alias",
+    "credito_alias",
+    "desconto_raw",
+    "chave_xml",
+    "usuario_inc",
+    "data_inc_br",
+    "tipo_inc",
+    "usuario_alt",
+    "data_alt_br",
+    "situacao"
+  ],
+  "rename_rules": [
+    {
+      "pattern": "(?i)^chave(_doc|_nfe)?$",
+      "to": "chave"
+    },
+    {
+      "pattern": "(?i)^fornecedor(_cod)?$",
+      "to": "fornecedor_cod"
+    },
+    {
+      "pattern": "(?i)^(nome_)?fornecedor(_nome)?$",
+      "to": "fornecedor_nome"
+    },
+    {
+      "pattern": "(?i)^data_?entrada$",
+      "to": "data_entrada_br"
+    },
+    {
+      "pattern": "(?i)^data_?emiss[aã]o$",
+      "to": "data_emissao_br"
+    },
+    {
+      "pattern": "(?i)^(documento|doc|nf|n[ºo] docto|numero_?docto)$",
+      "to": "documento_raw"
+    },
+    {
+      "pattern": "(?i)^cfop$",
+      "to": "cfop"
+    },
+    {
+      "pattern": "(?i)^modelo$",
+      "to": "modelo"
+    },
+    {
+      "pattern": "(?i)^esp[eé]cie$",
+      "to": "especie"
+    },
+    {
+      "pattern": "(?i)^(condi(c|ç)[aã]o|condicao_?pagto|forma_pagto)$",
+      "to": "condicao_pagto"
+    },
+    {
+      "pattern": "(?i)^(valor(_cont[aá]bil)?|total|v_total)$",
+      "to": "valor_contabil_raw"
+    },
+    {
+      "pattern": "(?i)^d[eé]bito_?alias$",
+      "to": "debito_alias"
+    },
+    {
+      "pattern": "(?i)^cr[eé]dito_?alias$",
+      "to": "credito_alias"
+    },
+    {
+      "pattern": "(?i)^desconto$",
+      "to": "desconto_raw"
+    },
+    {
+      "pattern": "(?i)^(chave(_xml)?|chave_?nfe)$",
+      "to": "chave_xml"
+    },
+    {
+      "pattern": "(?i)^usu[aá]rio_?inc$",
+      "to": "usuario_inc"
+    },
+    {
+      "pattern": "(?i)^data_?inc$",
+      "to": "data_inc_br"
+    },
+    {
+      "pattern": "(?i)^tipo_?inc$",
+      "to": "tipo_inc"
+    },
+    {
+      "pattern": "(?i)^usu[aá]rio_?alt$",
+      "to": "usuario_alt"
+    },
+    {
+      "pattern": "(?i)^data_?alt$",
+      "to": "data_alt_br"
+    },
+    {
+      "pattern": "(?i)^situa[cç][aã]o$",
+      "to": "situacao"
+    }
+  ],
+  "parse_rules": {
+    "dates": [
+      {
+        "input_field": "data_emissao_br",
+        "output_field": "data_emissao_iso",
+        "formats": [
+          "%d/%m/%Y",
+          "%d/%m/%y",
+          "%Y-%m-%d",
+          "%d-%m-%Y"
+        ],
+        "coerce_invalid_to_null": true
+      },
+      {
+        "input_field": "data_entrada_br",
+        "output_field": "data_entrada_iso",
+        "formats": [
+          "%d/%m/%Y",
+          "%d/%m/%y",
+          "%Y-%m-%d",
+          "%d-%m-%Y"
+        ],
+        "coerce_invalid_to_null": true
+      },
+      {
+        "input_field": "data_inc_br",
+        "output_field": "data_inc_iso",
+        "formats": [
+          "%d/%m/%Y %H:%M:%S",
+          "%d/%m/%Y",
+          "%Y-%m-%d %H:%M:%S"
+        ],
+        "coerce_invalid_to_null": true
+      },
+      {
+        "input_field": "data_alt_br",
+        "output_field": "data_alt_iso",
+        "formats": [
+          "%d/%m/%Y %H:%M:%S",
+          "%d/%m/%Y",
+          "%Y-%m-%d %H:%M:%S"
+        ],
+        "coerce_invalid_to_null": true
+      }
+    ],
+    "numbers": [
+      {
+        "input_field": "valor_contabil_raw",
+        "output_field": "valor_contabil_num",
+        "strip": true,
+        "remove_thousands": true,
+        "decimal_comma": true,
+        "fallback_decimal_point": true,
+        "allow_parentheses_negative": true,
+        "round_places": 2
+      },
+      {
+        "input_field": "desconto_raw",
+        "output_field": "desconto_num",
+        "strip": true,
+        "remove_thousands": true,
+        "decimal_comma": true,
+        "fallback_decimal_point": true,
+        "allow_parentheses_negative": true,
+        "round_places": 2
+      }
+    ],
+    "document": {
+      "input_field": "documento_raw",
+      "outputs": {
+        "doc_num_norm": {
+          "regex_keep_digits": true
+        },
+        "doc_serie_norm": {
+          "regex_series": "(?:/|\\s)(\\d{1,3})$"
+        }
+      },
+      "strip_tokens": [
+        "NFE",
+        "NF",
+        "DCTO",
+        "DUP",
+        "FAT",
+        "PED",
+        "DOC",
+        "CTE",
+        "XML",
+        "CHAVE"
+      ],
+      "uppercase": true
+    },
+    "participant": {
+      "fields": [
+        "fornecedor_cod",
+        "fornecedor_nome"
+      ],
+      "normalize": {
+        "upper": true,
+        "strip": true,
+        "remove_accents": true
+      }
+    },
+    "cfop": {
+      "input_field": "cfop",
+      "normalize": {
+        "strip": true
+      },
+      "keep_digits_only": true,
+      "pad_left_to_4": true
+    },
+    "situacao": {
+      "input_field": "situacao",
+      "normalize_map": {
+        "canc": "CANCELADO",
+        "cancelado": "CANCELADO",
+        "regular": "REGULAR",
+        "autorizado": "REGULAR",
+        "inutilizado": "INUTILIZADO"
+      },
+      "uppercase": true
+    },
+    "derived": [
+      {
+        "expr": "coalesce(data_emissao_iso, data_entrada_iso)",
+        "as": "data_doc_iso"
+      },
+      {
+        "expr": "substr(coalesce(data_emissao_iso, data_entrada_iso),1,7)",
+        "as": "mes_ref"
+      }
+    ]
+  },
+  "validators": {
+    "required_columns": [
+      "documento_raw",
+      "valor_contabil_raw",
+      "fornecedor_cod"
+    ],
+    "at_least_one_date": [
+      "data_emissao_br",
+      "data_entrada_br"
+    ],
+    "rules": [
+      {
+        "name": "valor_non_negative",
+        "expr": "valor_contabil_num IS NULL OR valor_contabil_num >= 0"
+      },
+      {
+        "name": "cfop_len_4",
+        "expr": "length(cfop) = 4"
+      },
+      {
+        "name": "doc_num_present",
+        "expr": "length(doc_num_norm) >= 1"
+      }
+    ]
+  },
+  "output_mapping_to_staging": {
+    "table": "stg_suprema_ent",
+    "columns": {
+      "chave": "coalesce(chave,'')",
+      "fornecedor_cod": "fornecedor_cod",
+      "fornecedor_nome": "fornecedor_nome",
+      "data_entrada_br": "data_entrada_br",
+      "data_emissao_br": "data_emissao_br",
+      "data_entrada_iso": "data_entrada_iso",
+      "data_emissao_iso": "data_emissao_iso",
+      "documento_raw": "documento_raw",
+      "cfop": "cfop",
+      "modelo": "modelo",
+      "especie": "especie",
+      "condicao_pagto": "condicao_pagto",
+      "valor_contabil_raw": "valor_contabil_raw",
+      "valor_contabil_num": "valor_contabil_num",
+      "debito_alias": "debito_alias",
+      "credito_alias": "credito_alias",
+      "desconto_num": "desconto_num",
+      "chave_xml": "chave_xml",
+      "usuario_inc": "usuario_inc",
+      "data_inc_iso": "data_inc_iso",
+      "tipo_inc": "tipo_inc",
+      "usuario_alt": "usuario_alt",
+      "data_alt_iso": "data_alt_iso",
+      "situacao": "situacao",
+      "raw_json": "raw_json"
+    }
+  },
+  "profiling": {
+    "sample_rows": 200,
+    "null_like_values": [
+      "",
+      "NULL",
+      "N/A",
+      "-",
+      "--"
+    ],
+    "warn_on_unknown_columns": true
+  },
+  "test_samples": [
+    {
+      "input": {
+        "Fornecedor": "000045",
+        "NomeFornecedor": "Oxigênio Modelo Indústria e Comércio de Gases LTDA",
+        "Data_Emissão": "02/09/2025",
+        "Documento": "NFE 14959/002",
+        "CFOP": "1102",
+        "Valor_Contábil": "1.234,56",
+        "Situação": "Autorizado"
+      },
+      "expected_after_parse": {
+        "data_emissao_iso": "2025-09-02",
+        "doc_num_norm": "14959",
+        "doc_serie_norm": "2",
+        "cfop": "1102",
+        "valor_contabil_num": 1234.56,
+        "situacao": "REGULAR",
+        "mes_ref": "2025-09"
+      }
+    }
+  ]
+}

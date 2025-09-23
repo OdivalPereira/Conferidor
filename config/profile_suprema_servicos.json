@@ -1,0 +1,355 @@
+{
+  "profile_name": "suprema_servicos_csv",
+  "version": "1.0",
+  "source_kind": "csv",
+  "dialect": {
+    "encoding_default": "utf-8-sig",
+    "encoding_candidates": [
+      "utf-8-sig",
+      "latin1",
+      "cp1252"
+    ],
+    "delimiter_default": ";",
+    "delimiter_candidates": [
+      ";",
+      ",",
+      "\t",
+      "|"
+    ],
+    "quotechar": "\"",
+    "has_header": true,
+    "decimal_separators": [
+      ",",
+      "."
+    ],
+    "thousands_separators": [
+      ".",
+      " "
+    ]
+  },
+  "canonical_columns": [
+    "chave",
+    "participante_cod",
+    "participante_nome",
+    "data_entrada_br",
+    "data_emissao_br",
+    "documento_raw",
+    "rps_raw",
+    "nfse_raw",
+    "cfop",
+    "modelo",
+    "especie",
+    "condicao_pagto",
+    "valor_contabil_raw",
+    "debito_alias",
+    "credito_alias",
+    "desconto_raw",
+    "situacao",
+    "municipio",
+    "uf",
+    "codigo_servico",
+    "aliquota_iss_raw"
+  ],
+  "rename_rules": [
+    {
+      "pattern": "(?i)^chave(_doc|_nfse)?$",
+      "to": "chave"
+    },
+    {
+      "pattern": "(?i)^(prestador|tomador|participante)(_cod)?$",
+      "to": "participante_cod"
+    },
+    {
+      "pattern": "(?i)^(nome_)?(prestador|tomador|participante)(_nome)?$",
+      "to": "participante_nome"
+    },
+    {
+      "pattern": "(?i)^data_?emiss[aã]o$",
+      "to": "data_emissao_br"
+    },
+    {
+      "pattern": "(?i)^data_?(entrada|compet[eê]ncia)$",
+      "to": "data_entrada_br"
+    },
+    {
+      "pattern": "(?i)^(documento|doc|nfse|nfs-e|nf_?se|numero_?nfse)$",
+      "to": "documento_raw"
+    },
+    {
+      "pattern": "(?i)^rps(_numero)?$",
+      "to": "rps_raw"
+    },
+    {
+      "pattern": "(?i)^nfse(_numero)?$",
+      "to": "nfse_raw"
+    },
+    {
+      "pattern": "(?i)^cfop$",
+      "to": "cfop"
+    },
+    {
+      "pattern": "(?i)^modelo$",
+      "to": "modelo"
+    },
+    {
+      "pattern": "(?i)^esp[eé]cie$",
+      "to": "especie"
+    },
+    {
+      "pattern": "(?i)^(condi(c|ç)[aã]o|condicao_?pagto|forma_pagto)$",
+      "to": "condicao_pagto"
+    },
+    {
+      "pattern": "(?i)^(valor(_cont[aá]bil)?|total|v_total)$",
+      "to": "valor_contabil_raw"
+    },
+    {
+      "pattern": "(?i)^d[eé]bito_?alias$",
+      "to": "debito_alias"
+    },
+    {
+      "pattern": "(?i)^cr[eé]dito_?alias$",
+      "to": "credito_alias"
+    },
+    {
+      "pattern": "(?i)^desconto$",
+      "to": "desconto_raw"
+    },
+    {
+      "pattern": "(?i)^situa[cç][aã]o$",
+      "to": "situacao"
+    },
+    {
+      "pattern": "(?i)^munic[ií]pio$",
+      "to": "municipio"
+    },
+    {
+      "pattern": "(?i)^uf$",
+      "to": "uf"
+    },
+    {
+      "pattern": "(?i)^(c[oó]digo_?servi[cç]o|cod_?serv)$",
+      "to": "codigo_servico"
+    },
+    {
+      "pattern": "(?i)^aliq(u?o)?ta?_?iss$",
+      "to": "aliquota_iss_raw"
+    }
+  ],
+  "parse_rules": {
+    "dates": [
+      {
+        "input_field": "data_emissao_br",
+        "output_field": "data_emissao_iso",
+        "formats": [
+          "%d/%m/%Y",
+          "%d/%m/%y",
+          "%Y-%m-%d",
+          "%d-%m-%Y"
+        ],
+        "coerce_invalid_to_null": true
+      },
+      {
+        "input_field": "data_entrada_br",
+        "output_field": "data_entrada_iso",
+        "formats": [
+          "%d/%m/%Y",
+          "%d/%m/%y",
+          "%Y-%m-%d",
+          "%d-%m-%Y"
+        ],
+        "coerce_invalid_to_null": true
+      }
+    ],
+    "numbers": [
+      {
+        "input_field": "valor_contabil_raw",
+        "output_field": "valor_contabil_num",
+        "strip": true,
+        "remove_thousands": true,
+        "decimal_comma": true,
+        "fallback_decimal_point": true,
+        "allow_parentheses_negative": true,
+        "round_places": 2
+      },
+      {
+        "input_field": "desconto_raw",
+        "output_field": "desconto_num",
+        "strip": true,
+        "remove_thousands": true,
+        "decimal_comma": true,
+        "fallback_decimal_point": true,
+        "allow_parentheses_negative": true,
+        "round_places": 2
+      },
+      {
+        "input_field": "aliquota_iss_raw",
+        "output_field": "aliquota_iss_num",
+        "percent_like": true,
+        "decimal_comma": true,
+        "fallback_decimal_point": true,
+        "round_places": 4
+      }
+    ],
+    "document": {
+      "input_field": "documento_raw",
+      "outputs": {
+        "doc_num_norm": {
+          "regex_keep_digits": true
+        },
+        "doc_serie_norm": {
+          "regex_series": "(?:/|[-\\s])(\\d{1,3})$"
+        }
+      },
+      "strip_tokens": [
+        "NFSE",
+        "NFS-E",
+        "RPS",
+        "NFS",
+        "DOC",
+        "FAT"
+      ],
+      "uppercase": true
+    },
+    "rps": {
+      "input_field": "rps_raw",
+      "outputs": {
+        "rps_num_norm": {
+          "regex_keep_digits": true
+        }
+      },
+      "uppercase": true
+    },
+    "nfse": {
+      "input_field": "nfse_raw",
+      "outputs": {
+        "nfse_num_norm": {
+          "regex_keep_digits": true
+        }
+      },
+      "uppercase": true
+    },
+    "participant": {
+      "fields": [
+        "participante_cod",
+        "participante_nome"
+      ],
+      "normalize": {
+        "upper": true,
+        "strip": true,
+        "remove_accents": true
+      }
+    },
+    "cfop": {
+      "input_field": "cfop",
+      "normalize": {
+        "strip": true
+      },
+      "keep_digits_only": true,
+      "pad_left_to_4": true,
+      "optional": true
+    },
+    "situacao": {
+      "input_field": "situacao",
+      "normalize_map": {
+        "canc": "CANCELADO",
+        "cancelado": "CANCELADO",
+        "regular": "REGULAR",
+        "autorizado": "REGULAR",
+        "inutilizado": "INUTILIZADO"
+      },
+      "uppercase": true
+    },
+    "derived": [
+      {
+        "expr": "coalesce(data_emissao_iso, data_entrada_iso)",
+        "as": "data_doc_iso"
+      },
+      {
+        "expr": "substr(coalesce(data_emissao_iso, data_entrada_iso),1,7)",
+        "as": "mes_ref"
+      }
+    ]
+  },
+  "validators": {
+    "required_columns": [
+      "documento_raw",
+      "valor_contabil_raw"
+    ],
+    "at_least_one_participant": [
+      "participante_cod",
+      "participante_nome"
+    ],
+    "at_least_one_date": [
+      "data_emissao_br",
+      "data_entrada_br"
+    ],
+    "rules": [
+      {
+        "name": "valor_non_negative",
+        "expr": "valor_contabil_num IS NULL OR valor_contabil_num >= 0"
+      },
+      {
+        "name": "doc_num_present",
+        "expr": "length(doc_num_norm) >= 1"
+      }
+    ]
+  },
+  "output_mapping_to_staging": {
+    "table": "stg_suprema_srv",
+    "columns": {
+      "chave": "coalesce(chave,'')",
+      "participante_cod": "participante_cod",
+      "participante_nome": "participante_nome",
+      "data_entrada_br": "data_entrada_br",
+      "data_emissao_br": "data_emissao_br",
+      "data_entrada_iso": "data_entrada_iso",
+      "data_emissao_iso": "data_emissao_iso",
+      "documento_raw": "documento_raw",
+      "cfop": "cfop",
+      "modelo": "modelo",
+      "especie": "especie",
+      "condicao_pagto": "condicao_pagto",
+      "valor_contabil_num": "valor_contabil_num",
+      "debito_alias": "debito_alias",
+      "credito_alias": "credito_alias",
+      "desconto_num": "desconto_num",
+      "situacao": "situacao",
+      "raw_json": "raw_json"
+    }
+  },
+  "profiling": {
+    "sample_rows": 200,
+    "null_like_values": [
+      "",
+      "NULL",
+      "N/A",
+      "-",
+      "--"
+    ],
+    "warn_on_unknown_columns": true
+  },
+  "test_samples": [
+    {
+      "input": {
+        "Prestador": "001122",
+        "NomePrestador": "Serviços Alfa Ltda",
+        "Data_Emissão": "05/09/2025",
+        "Documento": "NFS-e 9876-1",
+        "Valor_Contábil": "2.750,90",
+        "Município": "Goiânia",
+        "UF": "GO",
+        "Código_Serviço": "7.02",
+        "Situação": "Autorizado"
+      },
+      "expected_after_parse": {
+        "data_emissao_iso": "2025-09-05",
+        "doc_num_norm": "9876",
+        "doc_serie_norm": "1",
+        "valor_contabil_num": 2750.9,
+        "situacao": "REGULAR",
+        "mes_ref": "2025-09"
+      }
+    }
+  ]
+}

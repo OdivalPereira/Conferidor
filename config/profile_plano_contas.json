@@ -1,0 +1,154 @@
+{
+  "profile_name": "plano_contas_csv",
+  "version": "1.0",
+  "source_kind": "csv",
+  "dialect": {
+    "encoding_default": "utf-8-sig",
+    "encoding_candidates": [
+      "utf-8-sig",
+      "latin1",
+      "cp1252"
+    ],
+    "delimiter_default": ";",
+    "delimiter_candidates": [
+      ";",
+      ",",
+      "\t",
+      "|"
+    ],
+    "quotechar": "\"",
+    "has_header": true
+  },
+  "canonical_columns": [
+    "codigo",
+    "alias",
+    "nome",
+    "natureza"
+  ],
+  "rename_rules": [
+    {
+      "pattern": "(?i)^(c[oó]d(igo)?|cod|conta(_?cod)?|reduzido|conta_reduzida)$",
+      "to": "codigo"
+    },
+    {
+      "pattern": "(?i)^(apelido|alias|apelido_conta)$",
+      "to": "alias"
+    },
+    {
+      "pattern": "(?i)^(nome|descri[cç][aã]o|conta|conta_nome)$",
+      "to": "nome"
+    },
+    {
+      "pattern": "(?i)^(natureza|tipo|classe)$",
+      "to": "natureza"
+    }
+  ],
+  "parse_rules": {
+    "codigo": {
+      "input_field": "codigo",
+      "normalize": {
+        "strip": true,
+        "upper": true
+      },
+      "derive": [
+        {
+          "expr": "replace(replace(codigo,'.',''),' ','')",
+          "as": "codigo_compacto"
+        },
+        {
+          "expr": "length(codigo) - length(replace(codigo,'.','')) + 1",
+          "as": "nivel"
+        }
+      ]
+    },
+    "alias": {
+      "input_field": "alias",
+      "normalize": {
+        "strip": true,
+        "upper": true
+      }
+    },
+    "nome": {
+      "input_field": "nome",
+      "normalize": {
+        "strip": true,
+        "upper": true,
+        "remove_accents": true,
+        "collapse_spaces": true
+      }
+    },
+    "natureza": {
+      "input_field": "natureza",
+      "normalize_map": {
+        "a": "ATIVO",
+        "ativo": "ATIVO",
+        "p": "PASSIVO",
+        "passivo": "PASSIVO",
+        "pl": "PATRIMONIO_LIQUIDO",
+        "patrimônio líquido": "PATRIMONIO_LIQUIDO",
+        "r": "RECEITA",
+        "receita": "RECEITA",
+        "d": "DESPESA",
+        "despesa": "DESPESA",
+        "custo": "CUSTO",
+        "resultado": "RESULTADO"
+      },
+      "uppercase": true
+    }
+  },
+  "validators": {
+    "required_columns": [
+      "codigo",
+      "nome"
+    ],
+    "rules": [
+      {
+        "name": "codigo_minlen",
+        "expr": "length(codigo) >= 1"
+      },
+      {
+        "name": "natureza_allowed",
+        "expr": "natureza IS NULL OR natureza IN ('ATIVO','PASSIVO','PATRIMONIO_LIQUIDO','RECEITA','DESPESA','CUSTO','RESULTADO')"
+      }
+    ]
+  },
+  "output_mapping_to_staging": {
+    "table": "stg_plano_contas",
+    "columns": {
+      "codigo": "codigo",
+      "alias": "alias",
+      "nome": "nome",
+      "natureza": "natureza",
+      "raw_json": "raw_json"
+    }
+  },
+  "profiling": {
+    "sample_rows": 200,
+    "null_like_values": [
+      "",
+      "NULL",
+      "N/A",
+      "-",
+      "--"
+    ],
+    "warn_on_unknown_columns": true
+  },
+  "test_samples": [
+    {
+      "input": {
+        "Conta_Cod": "1.1.1.01.0001",
+        "Apelido": "CAIXA MATRIZ",
+        "Descrição": "Caixa - Matriz",
+        "Natureza": "Ativo"
+      },
+      "expected_after_parse": {
+        "codigo": "1.1.1.01.0001",
+        "codigo_compacto": "111010001",
+        "nivel": 6,
+        "alias": "CAIXA MATRIZ",
+        "nome": "CAIXA - MATRIZ",
+        "natureza": "ATIVO"
+      }
+    }
+  ]
+}
