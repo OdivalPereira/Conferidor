@@ -23,35 +23,41 @@
 ## 2) Estrutura sugerida de pastas
 ```
 projeto-conferencia/
-├─ dados/                                  # coloque aqui os CSVs do cliente/período
-│  ├─ sucessor.csv
-│  ├─ suprema_entradas.csv
-│  ├─ suprema_saidas.csv
-│  ├─ suprema_servicos.csv
-│  ├─ fornecedores.csv
-│  └─ plano_contas.csv
-├─ out/                                    # saídas geradas (grid, relatórios)
 ├─ cfg/                                    # configuração por cliente/período
-│  ├─ profiles_map.yml
-│  ├─ matching_pesos.yml
-│  ├─ regex_tokens.yml
 │  ├─ cfop_expectativas.csv
-│  ├─ ui_schema.json
-│  └─ issues_rules.yml
-└─ src/                                    # scripts do projeto
-   ├─ loader.py
-   ├─ normalizer.py
-   ├─ matcher.py
-   ├─ ui_dataset_builder.py
-   ├─ issues_engine.py
-   ├─ export_xlsx.py
-   ├─ export_pdf.py
-   ├─ ui_server.py
-   └─ ui_app.html
+│  ├─ issues_rules.yml
+│  ├─ matching_pesos.yml
+│  ├─ profiles_map.yml
+│  ├─ regex_tokens.yml
+│  └─ ui_schema.json
+├─ dados/                                  # coloque aqui os CSVs do cliente/período
+├─ out/                                    # saídas geradas (pipeline)
+├─ schemas/
+│  ├─ schema_conferencia_postgres.sql
+│  └─ schema_conferencia_sqlite.sql
+├─ src/                                    # scripts do projeto
+│  ├─ export_pdf.py
+│  ├─ export_xlsx.py
+│  ├─ issues_engine.py
+│  ├─ loader.py
+│  ├─ matcher.py
+│  ├─ normalizer.py
+│  ├─ ui_app.html
+│  ├─ ui_dataset_builder.py
+│  └─ ui_server.py
+├─ tests/
+│  ├─ conftest.py
+│  ├─ fixtures/
+│  ├─ test_issues_engine.py
+│  ├─ test_loader_normalizer.py
+│  ├─ test_loader_profiles.py
+│  ├─ test_matcher_strategies.py
+│  ├─ test_normalizer_utils.py
+│  └─ test_pipeline.py
+├─ run_pipeline.py
+├─ README_implantacao.md
+└─ requirements.txt
 ```
-
----
-
 ## 3) Preparar os CSVs (escopo aceito)
 - Um **cliente** por vez e **um período** (ex.: 08/2025).
 - Upload **manual** para `dados/`.
