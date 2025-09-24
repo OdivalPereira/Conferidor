@@ -28,7 +28,12 @@ def style_sheet(writer: pd.ExcelWriter, sheet_name: str, df: pd.DataFrame, freez
     header_format = writer.book.add_format({"bold": True, "bg_color": "#111827", "font_color": "#f9fafb"})
     for col_idx, column in enumerate(df.columns):
         worksheet.write(0, col_idx, column, header_format)
-        max_len = max(12, int(df[column].astype(str).str.len().max() or 12))
+        lengths = df[column].astype(str).replace({"nan":"","None":""}).str.len()
+        valid_max = lengths[~lengths.isna()].max() if not lengths.empty else 12
+        try:
+            max_len = int(max(12, valid_max or 12))
+        except (TypeError, ValueError):
+            max_len = 12
         worksheet.set_column(col_idx, col_idx, min(max_len + 2, 60))
 
 

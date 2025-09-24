@@ -1,4 +1,4 @@
-Project tree for Conferidor
+﻿Project tree for Conferidor
 
 |-- .devcontainer
 |   -- devcontainer.json
@@ -12,17 +12,6 @@ Project tree for Conferidor
 |   |-- profiles_map.yml
 |   |-- regex_tokens.yml
 |   -- ui_schema.json
-|-- config
-|   |-- cfop_expectativas.csv
-|   |-- matching_pesos.yml
-|   |-- profile_fornecedores.json
-|   |-- profile_plano_contas.json
-|   |-- profile_sucessor.json
-|   |-- profile_suprema_entradas.json
-|   |-- profile_suprema_saidas.json
-|   |-- profile_suprema_servicos.json
-|   |-- regex_tokens.yml
-|   -- tolerancias.yml
 |-- dados
 |-- out
 |-- schemas
@@ -39,6 +28,18 @@ Project tree for Conferidor
 |   |-- ui_app.html
 |   |-- ui_dataset_builder.py
 |   -- ui_server.py
+|-- tests
+|   |-- conftest.py
+|   |-- test_loader_normalizer.py
+|   |-- test_normalizer_utils.py
+|   |-- test_pipeline.py
+|   -- fixtures
+|       |-- fornecedores.csv
+|       |-- plano_contas.csv
+|       |-- sucessor.csv
+|       |-- suprema_entradas.csv
+|       |-- suprema_saidas.csv
+|       -- suprema_servicos.csv
 |-- agente.md
 |-- README_implantacao.md
 -- TREE.md

@@ -2,12 +2,15 @@
 
 import argparse
 import csv
+import html
 import json
 import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+
+from io import StringIO
 
 import pandas as pd
 import yaml
@@ -77,17 +80,79 @@ class ProfilesMap:
 # ---------------------------------------------------------------------------
 
 def _normalise_header(header: str) -> str:
+    header = header.replace("\ufeff", "")
     return re.sub(r"\s+", " ", header.strip())
 
 
 def _build_header_list(path: Path, delimiter: str, encoding: str) -> List[str]:
     with path.open("r", encoding=encoding, errors="ignore", newline="") as handle:
         reader = csv.reader(handle, delimiter=delimiter)
-        try:
-            header = next(reader)
-        except StopIteration:
+        header = None
+        for row in reader:
+            non_blank = [str(cell).strip() for cell in row if str(cell).strip()]
+            if not non_blank:
+                continue
+            if len(non_blank) <= 1:
+                continue
+            header = row
+            break
+        if header is None:
             return []
     return [_normalise_header(col) for col in header]
+
+
+def _detect_header_skiprows(path: Path, delimiter: str) -> int:
+    with path.open("r", encoding="latin-1", errors="ignore", newline="") as handle:
+        reader = csv.reader(handle, delimiter=delimiter)
+        skip = 0
+        for row in reader:
+            non_blank = [str(cell).strip() for cell in row if str(cell).strip()]
+            if not non_blank:
+                skip += 1
+                continue
+            if len(non_blank) <= 1:
+                skip += 1
+                continue
+            return skip
+            # if a well formed header is not found fallback to zero
+        return 0
+
+
+def _merge_excess_fields(text: str, delimiter: str, skiprows: int) -> str:
+    lines = text.splitlines()
+    if skiprows >= len(lines):
+        return text
+    header_line = lines[skiprows]
+    header_cols = header_line.split(delimiter)
+    expected = len(header_cols)
+    key_indices = [
+        idx
+        for idx, name in enumerate(header_cols)
+        if any(token in _normalise_header(name).lower() for token in ("observ", "complement", "histor", "mensagem", "detalhe"))
+    ] or [expected - 1]
+    for i in range(skiprows + 1, len(lines)):
+        line = lines[i]
+        if not line.strip():
+            continue
+        parts = line.split(delimiter)
+        if len(parts) <= expected:
+            continue
+        changed = False
+        while len(parts) > expected:
+            excess = len(parts) - expected
+            target_idx = next((idx for idx in key_indices if idx < len(parts)), expected - 1)
+            end = min(len(parts), target_idx + excess + 1)
+            merged = delimiter.join(parts[target_idx:end])
+            new_parts = parts[:target_idx] + [merged] + parts[end:]
+            if len(new_parts) == len(parts):
+                break
+            parts = new_parts
+            changed = True
+        if len(parts) > expected:
+            parts = parts[: expected - 1] + [delimiter.join(parts[expected - 1 :])]
+        if changed or len(parts) == expected:
+            lines[i] = delimiter.join(parts)
+    return '\n'.join(lines)
 
 
 def _score_profile(profile: ProfileConfig, headers: Iterable[str]) -> Tuple[int, List[str]]:
@@ -151,31 +216,95 @@ def detect_profile(path: Path, profiles_map: ProfilesMap) -> Tuple[Optional[Prof
     return best, details
 
 
+def _normalise_row_length(parts: List[str], expected: int, key_indices: List[int], delimiter: str) -> List[str]:
+    if len(parts) == expected:
+        return list(parts)
+    working = list(parts)
+    while len(working) > expected:
+        excess = len(working) - expected
+        target_idx = next((idx for idx in key_indices if idx < len(working)), expected - 1)
+        end = min(len(working), target_idx + excess + 1)
+        merged = delimiter.join(working[target_idx:end])
+        new_working = working[:target_idx] + [merged] + working[end:]
+        if len(new_working) == len(working):
+            break
+        working = new_working
+    if len(working) > expected:
+        working = working[: expected - 1] + [delimiter.join(working[expected - 1 :])]
+    if len(working) < expected:
+        working.extend([""] * (expected - len(working)))
+    return working
+
+
 def _read_csv(path: Path, profile: ProfileConfig, defaults: Dict[str, str]) -> pd.DataFrame:
     delimiter = profile.csv_opts.get("delimiter") or defaults.get("delimiter") or ";"
-    encoding = profile.csv_opts.get("encoding") or defaults.get("encoding") or "utf-8"
     decimal = profile.csv_opts.get("decimal") or defaults.get("decimal") or ","
-    try:
-        df = pd.read_csv(
-            path,
-            dtype=str,
-            keep_default_na=False,
-            encoding=encoding,
-            sep=delimiter,
-            engine="python",
-        )
-    except UnicodeDecodeError:
-        df = pd.read_csv(
-            path,
-            dtype=str,
-            keep_default_na=False,
-            encoding="latin1",
-            sep=delimiter,
-            engine="python",
-        )
-    df.columns = [_normalise_header(col) for col in df.columns]
+    base_encoding = profile.csv_opts.get("encoding") or defaults.get("encoding") or "utf-8"
+    skiprows = _detect_header_skiprows(path, delimiter)
+
+    cand_list: List[str] = []
+    for candidate in (base_encoding, defaults.get("encoding"), "latin-1", "cp1252"):
+        if candidate and candidate.lower() not in [item.lower() for item in cand_list]:
+            cand_list.append(candidate)
+
+    last_error: Optional[Exception] = None
+    for encoding in cand_list:
+        try:
+            raw_text = path.read_text(encoding=encoding, errors="ignore")
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+
+        normalised = html.unescape(raw_text)
+        normalised = re.sub(r'&amp;', '&', normalised, flags=re.IGNORECASE)
+        normalised = re.sub(r'(?<!&)amp;', '&', normalised, flags=re.IGNORECASE)
+
+        buffer = StringIO(normalised)
+        reader = csv.reader(buffer, delimiter=delimiter)
+
+        skipped = 0
+        while skipped < skiprows:
+            try:
+                next(reader)
+            except StopIteration:
+                break
+            skipped += 1
+
+        header: Optional[List[str]] = None
+        rows: List[List[str]] = []
+        for row in reader:
+            if not any(str(cell).strip() for cell in row):
+                continue
+            if header is None:
+                header = row
+                continue
+            rows.append(row)
+
+        if header is None:
+            last_error = ValueError(f'Header not found in {path}')
+            continue
+
+        header_norm = [_normalise_header(col) for col in header]
+        expected = len(header_norm)
+        key_indices = [
+            idx
+            for idx, name in enumerate(header_norm)
+            if any(token in name.lower() for token in ("observ", "complement", "histor", "mensagem", "detalhe"))
+        ] or [expected - 1]
+
+        data_rows: List[List[str]] = []
+        for row in rows:
+            adjusted = _normalise_row_length(row, expected, key_indices, delimiter)
+            data_rows.append(adjusted)
+
+        df = pd.DataFrame(data_rows, columns=header_norm, dtype=str)
+        break
+    else:
+        if last_error:
+            raise last_error
+        raise RuntimeError(f"Unable to read CSV file: {path}")
+
     if decimal != ".":
-        # keep raw values as text; decimal handling happens in normaliser
         pass
     return df
 

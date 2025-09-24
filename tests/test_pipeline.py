@@ -1,4 +1,4 @@
-﻿import shutil
+import shutil
 import json
 from pathlib import Path
 
@@ -9,6 +9,8 @@ from normalizer import main as normalizer_main
 from matcher import main as matcher_main
 from issues_engine import main as issues_main
 from ui_dataset_builder import main as dataset_main
+from export_xlsx import run as export_xlsx_run
+from export_pdf import run as export_pdf_run
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -135,3 +137,21 @@ def test_full_pipeline(tmp_path):
 
     meta = json.loads(meta_json.read_text(encoding="utf-8"))
     assert meta["stats"]["total_matches"] >= 1
+
+def test_exports(tmp_path):
+    grid_csv = tmp_path / "grid.csv"
+    grid_csv.write_text("match.status,score,S.valor\nOK,75,100.0\n", encoding="utf-8")
+    sem_fonte_csv = tmp_path / "sem_fonte.csv"
+    sem_fonte_csv.write_text("S.row_id,S.doc\n1,NA\n", encoding="utf-8")
+    sem_sucessor_csv = tmp_path / "sem_sucessor.csv"
+    sem_sucessor_csv.write_text("fonte_tipo,F.doc\nENTRADA,123\n", encoding="utf-8")
+
+    out_xlsx = tmp_path / "relatorio.xlsx"
+    export_xlsx_run(str(grid_csv), str(sem_fonte_csv), str(sem_sucessor_csv), str(out_xlsx))
+    assert out_xlsx.exists()
+
+    out_pdf = tmp_path / "relatorio.pdf"
+    result_pdf = export_pdf_run(str(grid_csv), str(out_pdf), cliente="Teste", periodo="2025")
+    pdf_path = result_pdf.get("pdf")
+    html_path = result_pdf.get("html") or result_pdf.get("download_html")
+    assert (pdf_path and Path(pdf_path).exists()) or (html_path and Path(html_path).exists())

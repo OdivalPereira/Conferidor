@@ -135,6 +135,15 @@ def load_cfop_map(path: Optional[str]) -> Dict[str, Dict[str, List[str]]]:
 # ---------------------------------------------------------------------------
 
 
+GRID_COLUMNS = [
+    'sucessor_idx', 'fonte_idx', 'fonte_tipo', 'status', 'match.status', 'match.strategy',
+    'match.score', 'match.motivos', 'delta.valor', 'delta.dias', 'S.data', 'S.data_iso',
+    'S.doc', 'S.doc_num', 'S.doc_serie', 'S.valor', 'S.debito', 'S.credito', 'S.part_d',
+    'S.part_c', 'S.historico', 'S.participante', 'F.data', 'F.data_iso', 'F.doc',
+    'F.doc_num', 'F.doc_serie', 'F.valor', 'F.cfop', 'F.situacao', 'F.participante',
+    'F.debito_alias', 'F.credito_alias'
+]
+
 def within_value(val_s: Optional[float], val_f: Optional[float], cfg: MatchConfig) -> Tuple[bool, Optional[float]]:
     if val_s is None or val_f is None:
         return False, None
@@ -583,8 +592,57 @@ def pick_best(candidates: List[Candidate], sucessor: pd.DataFrame, fontes: pd.Da
 
 def save_match_outputs(result: MatchResult, out_dir: Path) -> Dict[str, str]:
     ensure_dir(out_dir)
+
     grid_path = out_dir / "reconc_grid.csv"
-    result.grid.to_csv(grid_path, index=False, encoding="utf-8")
+    grid_df = result.grid
+    if len(grid_df.columns) == 0:
+        grid_df = pd.DataFrame(columns=GRID_COLUMNS)
+    grid_df.to_csv(grid_path, index=False, encoding="utf-8")
+
+    sem_fonte_path = out_dir / "reconc_sem_fonte.csv"
+    sem_fonte_df = result.sem_fonte
+    if len(sem_fonte_df.columns) == 0:
+        sem_fonte_df = pd.DataFrame(
+            columns=[
+                "S.row_id",
+                "S.data",
+                "S.doc",
+                "S.doc_num",
+                "S.valor",
+                "S.debito",
+                "S.credito",
+                "S.part_d",
+                "S.part_c",
+                "S.historico",
+            ]
+        )
+    sem_fonte_df.to_csv(sem_fonte_path, index=False, encoding="utf-8")
+
+    sem_sucessor_path = out_dir / "reconc_sem_sucessor.csv"
+    sem_sucessor_df = result.sem_sucessor
+    if len(sem_sucessor_df.columns) == 0:
+        sem_sucessor_df = pd.DataFrame(
+            columns=[
+                "fonte_tipo",
+                "F.row_id",
+                "F.data",
+                "F.doc",
+                "F.doc_num",
+                "F.valor",
+                "F.cfop",
+                "F.participante",
+                "F.situacao",
+            ]
+        )
+    sem_sucessor_df.to_csv(sem_sucessor_path, index=False, encoding="utf-8")
+
+    return {
+        "grid": str(grid_path),
+        "sem_fonte": str(sem_fonte_path),
+        "sem_sucessor": str(sem_sucessor_path),
+    }
+
+
 
     sem_fonte_path = out_dir / "reconc_sem_fonte.csv"
     result.sem_fonte.to_csv(sem_fonte_path, index=False, encoding="utf-8")

@@ -1,29 +1,29 @@
-cfop,direcao,classe,descricao,debito_sugerido,credito_sugerido,flags,observacao
-1101,ENTRADA,COMPRA_INDUSTR,Compra p/ industrialização,ESTOQUE_MP;MATERIA_PRIMA;ICMS_A_RECUPERAR,FORNECEDORES;DUPL_PAGAR,icms_recuperavel,
+﻿cfop,direcao,classe,descricao,debito_sugerido,credito_sugerido,flags,observacao
+1101,ENTRADA,COMPRA_INDUSTR,Compra p/ industrializacao,ESTOQUE_MP;MATERIA_PRIMA;ICMS_A_RECUPERAR,FORNECEDORES;DUPL_PAGAR,icms_recuperavel,
 1102,ENTRADA,COMPRA_REVENDA,Compra p/ revenda (mercadoria de terceiros),ESTOQUE_MERC;MERCADORIAS;ICMS_A_RECUPERAR,FORNECEDORES;DUPL_PAGAR,icms_recuperavel,
-1406,ENTRADA,COMPRA_ST,Compra com ST (substituição tributária),ESTOQUE_MERC;MERCADORIAS,FORNECEDORES;DUPL_PAGAR,icms_st;sem_credito_icms,Normalmente sem crédito de ICMS.
+1406,ENTRADA,COMPRA_ST,Compra com ST (substituicao tributaria),ESTOQUE_MERC;MERCADORIAS,FORNECEDORES;DUPL_PAGAR,icms_st;sem_credito_icms,Normalmente sem credito de ICMS.
 1551,ENTRADA,ATIVO_IMOB,Compra de bem p/ ativo imobilizado,IMOBILIZADO;ATIVO_IMOB;ICMS_A_RECUPERAR_CIAP,FORNECEDORES;DUPL_PAGAR,imobilizado;ciap,
-1552,ENTRADA,ATIVO_IMOB,Transferência de bem do ativo imobilizado,IMOBILIZADO;ATIVO_IMOB,FORNECEDORES;DUPL_PAGAR,imobilizado,Ajustar conforme política de transferências internas.
-1201,ENTRADA,DEVOLUCAO_VENDA,Devolução de venda – produção do estabelecimento,DEVOLUCAO_VENDAS;AJUSTE_RECEITA,CLIENTES;DUPL_RECEBER,devolucao,Entrada por devolução de cliente (reduz receita).
-1202,ENTRADA,DEVOLUCAO_VENDA,Devolução de venda – mercadoria de terceiros,DEVOLUCAO_VENDAS;AJUSTE_RECEITA,CLIENTES;DUPL_RECEBER,devolucao,
-1910,ENTRADA,RETORNO,Retorno de remessa p/ industrialização,ESTOQUE_MP;MATERIA_PRIMA,REMESSAS_EM_PROCESSO,retorno,Regularização de remessa para industrialização.
-2101,ENTRADA,COMPRA_INDUSTR,Compra p/ industrialização (de outra UF),ESTOQUE_MP;MATERIA_PRIMA;ICMS_A_REC_SUPLEMENTAR,FORNECEDORES;DUPL_PAGAR,icms_recuperavel;difal_eventual,
+1552,ENTRADA,ATIVO_IMOB,Transferencia de bem do ativo imobilizado,IMOBILIZADO;ATIVO_IMOB,FORNECEDORES;DUPL_PAGAR,imobilizado,Ajustar conforme politica de transferencias internas.
+1201,ENTRADA,DEVOLUCAO_VENDA,Devolucao de venda - producao do estabelecimento,DEVOLUCAO_VENDAS;AJUSTE_RECEITA,CLIENTES;DUPL_RECEBER,devolucao,Entrada por devolucao de cliente (reduz receita).
+1202,ENTRADA,DEVOLUCAO_VENDA,Devolucao de venda - mercadoria de terceiros,DEVOLUCAO_VENDAS;AJUSTE_RECEITA,CLIENTES;DUPL_RECEBER,devolucao,
+1910,ENTRADA,RETORNO,Retorno de remessa p/ industrializacao,ESTOQUE_MP;MATERIA_PRIMA,REMESSAS_EM_PROCESSO,retorno,Regularizacao de remessa para industrializacao.
+2101,ENTRADA,COMPRA_INDUSTR,Compra p/ industrializacao (de outra UF),ESTOQUE_MP;MATERIA_PRIMA;ICMS_A_REC_SUPLEMENTAR,FORNECEDORES;DUPL_PAGAR,icms_recuperavel;difal_eventual,
 2102,ENTRADA,COMPRA_REVENDA,Compra p/ revenda (de outra UF),ESTOQUE_MERC;MERCADORIAS;ICMS_A_REC_SUPLEMENTAR,FORNECEDORES;DUPL_PAGAR,icms_recuperavel;difal_eventual,
-5101,SAIDA,VENDA_PROPRIA,Venda de produção do estabelecimento,CLIENTES;DUPL_RECEBER,RECEITA_VENDAS;VENDAS;ICMS_A_RECOLHER;TRIBUTOS_SAIDA,gera_receita;icms_debito,
+5101,SAIDA,VENDA_PROPRIA,Venda de producao do estabelecimento,CLIENTES;DUPL_RECEBER,RECEITA_VENDAS;VENDAS;ICMS_A_RECOLHER;TRIBUTOS_SAIDA,gera_receita;icms_debito,
 5102,SAIDA,VENDA_REVENDA,Venda de mercadoria adquirida de terceiros,CLIENTES;DUPL_RECEBER,RECEITA_VENDAS;VENDAS;ICMS_A_RECOLHER;TRIBUTOS_SAIDA,gera_receita;icms_debito,
-5405,SAIDA,VENDA_ST,Venda com ST (substituição tributária),CLIENTES;DUPL_RECEBER,RECEITA_VENDAS;VENDAS,icms_st;sem_debito_icms,ICMS já recolhido por substituição.
-5201,SAIDA,DEVOLUCAO_COMPRA,Devolução de compra – insumos/industrialização,FORNECEDORES;DUPL_PAGAR,ESTOQUE_MP;MATERIA_PRIMA;ICMS_A_RECUPERAR,devolucao,Estorna estoque e crédito de ICMS quando aplicável.
-5202,SAIDA,DEVOLUCAO_COMPRA,Devolução de compra – mercadoria para revenda,FORNECEDORES;DUPL_PAGAR,ESTOQUE_MERC;MERCADORIAS;ICMS_A_RECUPERAR,devolucao,
-5151,SAIDA,TRANSFERENCIA,Transferência de produção do estabelecimento,ESTOQUE_EM_TRANSITO;ESTOQUE_FILIAL,ESTOQUE_PROD_ACABADO,transferencia,Sem efeito de receita.
-5152,SAIDA,TRANSFERENCIA,Transferência de mercadoria adquirida de terceiros,ESTOQUE_EM_TRANSITO;ESTOQUE_FILIAL,ESTOQUE_MERC;MERCADORIAS,transferencia,Sem efeito de receita.
-5910,SAIDA,REMESSA_INDUSTR,Remessa p/ industrialização,REMESSAS_EM_PROCESSO,ESTOQUE_MP;MATERIA_PRIMA,remessa,Haverá retorno (1910).
-6101,SAIDA,VENDA_PROPRIA,Venda de produção (outra UF),CLIENTES;DUPL_RECEBER,RECEITA_VENDAS;VENDAS;ICMS_A_RECOLHER;TRIBUTOS_SAIDA,gera_receita;icms_debito,
+5405,SAIDA,VENDA_ST,Venda com ST (substituicao tributaria),CLIENTES;DUPL_RECEBER,RECEITA_VENDAS;VENDAS,icms_st;sem_debito_icms,ICMS ja recolhido por substituicao.
+5201,SAIDA,DEVOLUCAO_COMPRA,Devolucao de compra - insumos/industrializacao,FORNECEDORES;DUPL_PAGAR,ESTOQUE_MP;MATERIA_PRIMA;ICMS_A_RECUPERAR,devolucao,Estorna estoque e credito de ICMS quando aplicavel.
+5202,SAIDA,DEVOLUCAO_COMPRA,Devolucao de compra - mercadoria para revenda,FORNECEDORES;DUPL_PAGAR,ESTOQUE_MERC;MERCADORIAS;ICMS_A_RECUPERAR,devolucao,
+5151,SAIDA,TRANSFERENCIA,Transferencia de producao do estabelecimento,ESTOQUE_EM_TRANSITO;ESTOQUE_FILIAL,ESTOQUE_PROD_ACABADO,transferencia,Sem efeito de receita.
+5152,SAIDA,TRANSFERENCIA,Transferencia de mercadoria adquirida de terceiros,ESTOQUE_EM_TRANSITO;ESTOQUE_FILIAL,ESTOQUE_MERC;MERCADORIAS,transferencia,Sem efeito de receita.
+5910,SAIDA,REMESSA_INDUSTR,Remessa p/ industrializacao,REMESSAS_EM_PROCESSO,ESTOQUE_MP;MATERIA_PRIMA,remessa,Havera retorno (1910).
+6101,SAIDA,VENDA_PROPRIA,Venda de producao (outra UF),CLIENTES;DUPL_RECEBER,RECEITA_VENDAS;VENDAS;ICMS_A_RECOLHER;TRIBUTOS_SAIDA,gera_receita;icms_debito,
 6102,SAIDA,VENDA_REVENDA,Venda de mercadoria de terceiros (outra UF),CLIENTES;DUPL_RECEBER,RECEITA_VENDAS;VENDAS;ICMS_A_RECOLHER;TRIBUTOS_SAIDA,gera_receita;icms_debito,
 6405,SAIDA,VENDA_ST,Venda com ST (outra UF),CLIENTES;DUPL_RECEBER,RECEITA_VENDAS;VENDAS,icms_st;sem_debito_icms,
-6201,SAIDA,DEVOLUCAO_COMPRA,Devolução de compra – insumos (outra UF),FORNECEDORES;DUPL_PAGAR,ESTOQUE_MP;MATERIA_PRIMA;ICMS_A_RECUPERAR,devolucao,
-6202,SAIDA,DEVOLUCAO_COMPRA,Devolução de compra – revenda (outra UF),FORNECEDORES;DUPL_PAGAR,ESTOQUE_MERC;MERCADORIAS;ICMS_A_RECUPERAR,devolucao,
-5933,SAIDA,SERVICO_ICMS,Prestação de serviço de comunicação/ICMS,CLIENTES;DUPL_RECEBER,RECEITA_SERVICOS;ICMS_A_RECOLHER;TRIBUTOS_SAIDA,servico_icms,Usado em serviços sujeitos ao ICMS.
-6933,SAIDA,SERVICO_ICMS,Prestação de serviço de comunicação/ICMS (outra UF),CLIENTES;DUPL_RECEBER,RECEITA_SERVICOS;ICMS_A_RECOLHER;TRIBUTOS_SAIDA,servico_icms,
-1556,ENTRADA,USO_CONSUMO,Compra de material de uso e consumo,DESPESAS_CONSUMO;MATERIAIS_CONSUMO,FORNECEDORES;DUPL_PAGAR,sem_credito_icms,Sem crédito de ICMS (regra geral).
-1949,ENTRADA,OUTRAS_ENTRADAS,Outras entradas (regularizações),AJUSTES_ENTRADA,FORNECEDORES;OUTROS,regularizacao,Revisar caso a caso.
-5949,SAIDA,OUTRAS_SAIDAS,Outras saídas (regularizações),OUTROS,AJUSTES_SAIDA,regularizacao,Revisar caso a caso.
+6201,SAIDA,DEVOLUCAO_COMPRA,Devolucao de compra - insumos (outra UF),FORNECEDORES;DUPL_PAGAR,ESTOQUE_MP;MATERIA_PRIMA;ICMS_A_RECUPERAR,devolucao,
+6202,SAIDA,DEVOLUCAO_COMPRA,Devolucao de compra - revenda (outra UF),FORNECEDORES;DUPL_PAGAR,ESTOQUE_MERC;MERCADORIAS;ICMS_A_RECUPERAR,devolucao,
+5933,SAIDA,SERVICO_ICMS,Prestacao de servico de comunicacao/ICMS,CLIENTES;DUPL_RECEBER,RECEITA_SERVICOS;ICMS_A_RECOLHER;TRIBUTOS_SAIDA,servico_icms,Usado em servicos sujeitos ao ICMS.
+6933,SAIDA,SERVICO_ICMS,Prestacao de servico de comunicacao/ICMS (outra UF),CLIENTES;DUPL_RECEBER,RECEITA_SERVICOS;ICMS_A_RECOLHER;TRIBUTOS_SAIDA,servico_icms,
+1556,ENTRADA,USO_CONSUMO,Compra de material de uso e consumo,DESPESAS_CONSUMO;MATERIAIS_CONSUMO,FORNECEDORES;DUPL_PAGAR,sem_credito_icms,Sem credito de ICMS (regra geral).
+1949,ENTRADA,OUTRAS_ENTRADAS,Outras entradas (regularizacoes),AJUSTES_ENTRADA,FORNECEDORES;OUTROS,regularizacao,Revisar caso a caso.
+5949,SAIDA,OUTRAS_SAIDAS,Outras saidas (regularizacoes),OUTROS,AJUSTES_SAIDA,regularizacao,Revisar caso a caso.

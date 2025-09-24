@@ -22,7 +22,10 @@ def read_csv(path: str) -> pd.DataFrame:
     file_path = Path(path)
     if not file_path.exists():
         return pd.DataFrame()
-    return pd.read_csv(file_path, dtype=str, keep_default_na=False, encoding="utf-8")
+    try:
+        return pd.read_csv(file_path, dtype=str, keep_default_na=False, encoding="utf-8")
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=[])
 
 
 def to_number(cell: Optional[str]) -> Optional[float]:
