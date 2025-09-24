@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -21,8 +21,10 @@ except Exception:  # pragma: no cover
     run_export_pdf = None
 
 APP_TITLE = "Conferidor UI"
-DATA_DIR = Path(os.environ.get("DATA_DIR", "out")).resolve()
-SCHEMA_PATH = Path(os.environ.get("UI_SCHEMA", "cfg/ui_schema.json")).resolve()
+DATA_DIR = Path(os.environ.get("DATA_DIR", "out")).expanduser().resolve()
+SCHEMA_PATH = Path(os.environ.get("UI_SCHEMA", "cfg/ui_schema.json")).expanduser().resolve()
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title=APP_TITLE)
 app.add_middleware(
@@ -32,8 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-if DATA_DIR.exists():
-    app.mount("/files", StaticFiles(directory=str(DATA_DIR)), name="files")
+app.mount("/files", StaticFiles(directory=str(DATA_DIR)), name="files")
 
 
 def _read_json(path: Path) -> Dict[str, object]:
@@ -56,6 +57,32 @@ def _read_jsonl(path: Path) -> List[Dict[str, object]]:
             except json.JSONDecodeError:
                 continue
     return rows
+
+
+def _coerce_path(value: object | None) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    return str(value)
+
+
+def _resolve_data_path(value: Optional[str], default_relative: str) -> Path:
+    if value:
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = (DATA_DIR / candidate).resolve()
+        else:
+            candidate = candidate.resolve()
+    else:
+        candidate = (DATA_DIR / default_relative).resolve()
+    return candidate
+
+
+def _relative_download(path: Path) -> Optional[str]:
+    try:
+        rel = path.resolve().relative_to(DATA_DIR)
+    except ValueError:
+        return None
+    return f"/files/{rel.as_posix()}"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -156,18 +183,18 @@ def api_grid(
 
 @app.get("/api/files")
 def api_files() -> Dict[str, object]:
-    if not DATA_DIR.exists():
-        raise HTTPException(404, detail=f"Directory not found: {DATA_DIR}")
     items: List[Dict[str, object]] = []
     for path in DATA_DIR.rglob("*"):
         if path.is_file():
             rel = path.relative_to(DATA_DIR).as_posix()
-            items.append({
-                "name": path.name,
-                "path": rel,
-                "size": path.stat().st_size,
-                "download": f"/files/{rel}",
-            })
+            items.append(
+                {
+                    "name": path.name,
+                    "path": rel,
+                    "size": path.stat().st_size,
+                    "download": f"/files/{rel}",
+                }
+            )
     items.sort(key=lambda item: item["path"].lower())
     return {"count": len(items), "items": items}
 
@@ -176,18 +203,22 @@ def api_files() -> Dict[str, object]:
 def api_export_xlsx(payload: Dict[str, object]):
     if run_export_xlsx is None:
         raise HTTPException(500, detail="export_xlsx is not available in this runtime")
-    grid = payload.get("grid", "out/match/reconc_grid.csv")
-    sem_fonte = payload.get("sem_fonte", "out/match/reconc_sem_fonte.csv")
-    sem_sucessor = payload.get("sem_sucessor", "out/match/reconc_sem_sucessor.csv")
-    out = payload.get("out", "out/relatorio_conferencia.xlsx")
+    grid = _resolve_data_path(_coerce_path(payload.get("grid")), "match/reconc_grid.csv")
+    sem_fonte = _resolve_data_path(_coerce_path(payload.get("sem_fonte")), "match/reconc_sem_fonte.csv")
+    sem_sucessor = _resolve_data_path(_coerce_path(payload.get("sem_sucessor")), "match/reconc_sem_sucessor.csv")
+    out = _resolve_data_path(_coerce_path(payload.get("out")), "relatorio_conferencia.xlsx")
     result = run_export_xlsx(
-        grid_csv=str(Path(grid)),
-        sem_fonte_csv=str(Path(sem_fonte)),
-        sem_sucessor_csv=str(Path(sem_sucessor)),
-        out_path=str(Path(out)),
+        grid_csv=str(grid),
+        sem_fonte_csv=str(sem_fonte),
+        sem_sucessor_csv=str(sem_sucessor),
+        out_path=str(out),
     )
-    rel = Path(result["out"]).resolve().relative_to(DATA_DIR)
-    result["download"] = f"/files/{rel.as_posix()}"
+    out_path = Path(str(result.get("out", out))).resolve()
+    download = _relative_download(out_path)
+    if download:
+        result["download"] = download
+    else:
+        result["absolute_out"] = str(out_path)
     return result
 
 
@@ -195,21 +226,28 @@ def api_export_xlsx(payload: Dict[str, object]):
 def api_export_pdf(payload: Dict[str, object]):
     if run_export_pdf is None:
         raise HTTPException(500, detail="export_pdf is not available in this runtime")
-    grid = payload.get("grid", "out/match/reconc_grid.csv")
-    out = payload.get("out", "out/relatorio_conferencia.pdf")
+    grid = _resolve_data_path(_coerce_path(payload.get("grid")), "match/reconc_grid.csv")
+    out = _resolve_data_path(_coerce_path(payload.get("out")), "relatorio_conferencia.pdf")
     cliente = payload.get("cliente")
     periodo = payload.get("periodo")
     result = run_export_pdf(
-        grid_csv=str(Path(grid)),
-        out_path=str(Path(out)),
+        grid_csv=str(grid),
+        out_path=str(out),
         cliente=cliente,
         periodo=periodo,
     )
     if result.get("pdf"):
-        rel = Path(result["pdf"]).resolve().relative_to(DATA_DIR)
-        result["download"] = f"/files/{rel.as_posix()}"
+        pdf_path = Path(str(result["pdf"])).resolve()
+        download = _relative_download(pdf_path)
+        if download:
+            result["download"] = download
+        else:
+            result["absolute_pdf"] = str(pdf_path)
     if result.get("html"):
-        rel = Path(result["html"]).resolve().relative_to(DATA_DIR)
-        result["download_html"] = f"/files/{rel.as_posix()}"
+        html_path = Path(str(result["html"])).resolve()
+        download_html = _relative_download(html_path)
+        if download_html:
+            result["download_html"] = download_html
+        else:
+            result["absolute_html"] = str(html_path)
     return result
-
