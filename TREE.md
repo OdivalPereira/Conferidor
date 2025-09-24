@@ -39,6 +39,7 @@
 |       |-- suprema_entradas.csv
 |       |-- suprema_saidas.csv
 |       -- suprema_servicos.csv
+|-- run_pipeline.py
 |-- agente.md
 |-- README_implantacao.md
 -- TREE.md

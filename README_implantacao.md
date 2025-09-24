@@ -59,6 +59,13 @@ projeto-conferencia/
 
 > Nota: o fluxo legado `src/reconciler.py` foi descontinuado; use `matcher.py -> issues_engine.py -> ui_dataset_builder.py` para gerar `reconc_grid.csv` e derivados.
 
+
+### 4.0 Pipeline automático
+```bash
+python run_pipeline.py
+```
+> Use parâmetros como `--dados-dir`, `--out-dir` ou `--skip-ui` para personalizar o fluxo.
+
 ### 4.1 Carregar e validar (loader → normalizer)
 ```bash
 cd projeto-conferencia
