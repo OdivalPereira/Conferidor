@@ -26,6 +26,26 @@
 <script type="text/javascript">
 const {useState,useEffect,useMemo,useCallback,Fragment} = React;
 
+const DEFAULT_API_BASE = (() => {
+  if (typeof window !== "undefined") {
+    if (typeof window.UI_API_BASE !== "undefined") {
+      const configured = String(window.UI_API_BASE);
+      return configured.replace(/\/$/, "");
+    }
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const param = params.get("api");
+      if (param) {
+        return param.replace(/\/$/, "");
+      }
+    } catch (err) {
+      console.warn("Falha ao ler parametro ?api:", err);
+    }
+  }
+  return "http://localhost:8000";
+})();
+// Ajuste `window.UI_API_BASE` ou adicione ?api=http://host:porta na URL antes de carregar o arquivo para definir outro endpoint.
+
 const STATUS_COLORS = {
   "OK": {bg:"#d1fae5", badge:"#16a34a", text:"#052e16"},
   "ALERTA": {bg:"#fef3c7", badge:"#f59e0b", text:"#451a03"},
@@ -47,16 +67,17 @@ function Badge({status}){
   return React.createElement("span",{className:"badge",style:{background:m.badge,color:m.text}},status||"—");
 }
 
-function useApi(base=""){
+function useApi(base=DEFAULT_API_BASE){
+  const baseUrl = base ? String(base).replace(/\/$/, "") : "";
   const get = async (path, params={})=>{
     const qs = new URLSearchParams(params).toString();
-    const url = base+path+(qs?("?"+qs):"");
+    const url = baseUrl + path + (qs?("?"+qs):"");
     const r = await fetch(url);
     if(!r.ok) throw new Error(await r.text());
     return await r.json();
   };
   const post = async (path, body)=>{
-    const r = await fetch(base+path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+    const r = await fetch(baseUrl + path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
     if(!r.ok) throw new Error(await r.text());
     return await r.json();
   };
@@ -190,7 +211,7 @@ function formatBRL(x){
 }
 
 function App(){
-  const api = useApi(""); // ajuste aqui se o backend não estiver no mesmo host/porta
+  const api = useApi(); // ajuste `window.UI_API_BASE` ou use ?api= para apontar para outro host/porta
   const [schema,setSchema] = useState(null);
   const [meta,setMeta] = useState(null);
   const [items,setItems] = useState([]);
