@@ -1,4 +1,4 @@
-﻿version: 1
+version: 1
 defaults:
   delimiter: ";"
   decimal: ","
@@ -12,105 +12,178 @@ profiles:
     source: SUCESSOR
     detect:
       required_any:
-        - "(?i)data"
-        - "(?i)debito"
-        - "(?i)credito"
-        - "(?i)doc"
+        - '(?i)^transa'
+        - '(?i)^d[ée]bito$'
+        - '(?i)^cr[ée]dito$'
+        - '(?i)^n[ºo]\s*doct?o$'
     csv:
       delimiter: ";"
-      decimal: ","
+      decimal: "."
+      encoding: "latin1"
     map:
-      data: ["(?i)^data"]
-      debito: ["(?i)debito"]
-      credito: ["(?i)credito"]
-      part_d: ["(?i)part.*deb"]
-      part_c: ["(?i)part.*cred"]
-      doc: ["(?i)doc"]
-      valor: ["(?i)valor"]
-      historico: ["(?i)hist"]
-      transacao_id: ["(?i)trans"]
+      data:
+        - '(?i)^data$'
+      debito:
+        - '(?i)^d[ée]bito$'
+      credito:
+        - '(?i)^cr[ée]dito$'
+      part_d:
+        - '(?i)^participante\s*d$'
+      part_c:
+        - '(?i)^participante\s*c$'
+      doc:
+        - '(?i)^n[ºo]\s*doct?o$'
+        - '(?i)^chave$'
+      valor:
+        - '(?i)^valor$'
+      historico:
+        - '(?i)^hist$'
+      transacao_id:
+        - '(?i)^transa'
+        - '(?i)^transa[cç][aã]o$'
 
   - id: suprema_entradas_v1
     source: SUPREMA_ENTRADA
     detect:
       required_any:
-        - "(?i)fornecedor"
-        - "(?i)cfop"
-        - "(?i)valor"
+        - '(?i)^chave$'
+        - '(?i)^nome\s*fornecedor$'
+        - '(?i)^valor\s*cont'
     map:
-      data: ["(?i)data"]
-      doc: ["(?i)doc"]
-      participante: ["(?i)fornecedor|participante"]
-      valor: ["(?i)valor"]
-      cfop: ["(?i)cfop"]
-      modelo: ["(?i)modelo"]
-      situacao: ["(?i)situacao"]
-      debito_alias: ["(?i)debito"]
-      credito_alias: ["(?i)credito"]
-      condicao: ["(?i)condicao"]
-      chave_xml: ["(?i)chave"]
+      data:
+        - '(?i)^data\s*emiss[aã]o$'
+        - '(?i)^data\s*entrada$'
+      doc:
+        - '(?i)^documento$'
+      participante:
+        - '(?i)^nome\s*fornecedor$'
+        - '(?i)^fornecedor$'
+      valor:
+        - '(?i)^valor\s*cont'
+      cfop:
+        - '(?i)^cfop$'
+      modelo:
+        - '(?i)^modelo$'
+      situacao:
+        - '(?i)^situa[cç][aã]o\s+do\s+documento$'
+      debito_alias:
+        - '(?i)^d[ée]bito$'
+      credito_alias:
+        - '(?i)^cr[ée]dito$'
+      condicao:
+        - '(?i)^condi[cç][oõ]es$'
+      chave_xml:
+        - '(?i)^chave\s*nf-e/ct-e/nfc-e/bp-e$'
     fixed:
       fonte_tipo: ENTRADA
+    csv:
+      delimiter: ";"
+      decimal: "."
+      encoding: "latin1"
 
   - id: suprema_saidas_v1
     source: SUPREMA_SAIDA
     detect:
       required_any:
-        - "(?i)cliente"
-        - "(?i)cfop"
-        - "(?i)valor"
+        - '(?i)^chave$'
+        - '(?i)^nome\s*cliente$'
+        - '(?i)^valor\s*cont'
     map:
-      data: ["(?i)data"]
-      doc: ["(?i)doc"]
-      participante: ["(?i)cliente|participante"]
-      valor: ["(?i)valor"]
-      cfop: ["(?i)cfop"]
-      modelo: ["(?i)modelo"]
-      situacao: ["(?i)situacao"]
-      debito_alias: ["(?i)debito"]
-      credito_alias: ["(?i)credito"]
-      condicao: ["(?i)condicao"]
-      chave_xml: ["(?i)chave"]
+      data:
+        - '(?i)^data\s*emiss[aã]o$'
+      doc:
+        - '(?i)^documento$'
+      participante:
+        - '(?i)^nome\s*cliente$'
+        - '(?i)^cliente$'
+      valor:
+        - '(?i)^valor\s*cont'
+      cfop:
+        - '(?i)^cfop$'
+      modelo:
+        - '(?i)^modelo$'
+      situacao:
+        - '(?i)^situa[cç][aã]o\s+do\s+documento$'
+      debito_alias:
+        - '(?i)^d[ée]bito$'
+      credito_alias:
+        - '(?i)^cr[ée]dito$'
+      condicao:
+        - '(?i)^condi[cç][oõ]es$'
+      chave_xml:
+        - '(?i)^chave\s*nf-e/ct-e/nfc-e/bp-e$'
     fixed:
       fonte_tipo: SAIDA
+    csv:
+      delimiter: ";"
+      decimal: "."
+      encoding: "latin1"
 
   - id: suprema_servicos_v1
     source: SUPREMA_SERVICO
     detect:
       required_any:
-        - "(?i)serv"
-        - "(?i)valor"
+        - '(?i)^nr\.?\s*doc\.$'
+        - '(?i)^cliente$'
+        - '(?i)^valor\s*cont'
     map:
-      data: ["(?i)data"]
-      doc: ["(?i)doc|rps"]
-      participante: ["(?i)tomador|fornecedor|cliente|participante"]
-      valor: ["(?i)valor"]
-      cfop: ["(?i)cfop"]
-      situacao: ["(?i)situacao"]
-      debito_alias: ["(?i)debito"]
-      credito_alias: ["(?i)credito"]
+      data:
+        - '(?i)^data\s*emiss[aã]o$'
+      doc:
+        - '(?i)^nr\.?\s*doc\.$'
+        - '(?i)^chave\s*nf-e/nfc-e$'
+      participante:
+        - '(?i)^cliente$'
+      valor:
+        - '(?i)^valor\s*cont'
+      cfop:
+        - '(?i)^nat\.?\s*opera'
+      situacao:
+        - '(?i)^situa[cç][aã]o$'
+      debito_alias:
+        - '(?i)^d[ée]bito$'
+      credito_alias:
+        - '(?i)^cr[ée]dito$'
+      condicao:
+        - '(?i)^cond\.?\s*pagto$'
     fixed:
       fonte_tipo: SERVICO
+    csv:
+      delimiter: ";"
+      decimal: "."
+      encoding: "latin1"
 
   - id: fornecedores_v1
     source: FORNECEDORES
     detect:
       required_any:
-        - "(?i)fornecedor"
-        - "(?i)cnpj"
+        - '(?i)fornecedor'
+        - '(?i)cnpj'
     map:
-      codigo: ["(?i)cod"]
-      nome: ["(?i)nome|razao"]
-      cnpj: ["(?i)cnpj"]
+      codigo:
+        - '(?i)cod'
+      nome:
+        - '(?i)nome'
+        - '(?i)razao'
+      cnpj:
+        - '(?i)cnpj'
 
   - id: plano_contas_v1
     source: PLANO_CONTAS
     detect:
       required_any:
-        - "(?i)plano"
-        - "(?i)conta"
+        - '(?i)plano'
+        - '(?i)conta'
     map:
-      codigo: ["(?i)cod|conta"]
-      alias: ["(?i)alias|apelido|reduzido"]
-      nome: ["(?i)nome|descricao"]
-      natureza: ["(?i)natureza|tipo"]
+      codigo:
+        - '(?i)cod|conta'
+      alias:
+        - '(?i)alias'
+        - '(?i)apelido'
+        - '(?i)reduzido'
+      nome:
+        - '(?i)nome'
+        - '(?i)descricao'
+      natureza:
+        - '(?i)natureza'
+        - '(?i)tipo'
