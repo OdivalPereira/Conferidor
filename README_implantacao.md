@@ -78,6 +78,8 @@ python run_pipeline.py
 ```
 > Use parâmetros como `--dados-dir`, `--out-dir` ou `--skip-ui` para personalizar o fluxo.
 
+> O script detecta automaticamente arquivos como `CONSULTA MOVIMENTO DE ENTRADAS ...` e `CONSULTA DE LANÇAMENTOS ...` dentro de `dados/`; use `--entradas`/`--sucessor` etc. apenas se quiser forçar um caminho específico.
+
 #### Notas para Windows/PowerShell
 - Se um comando usar `export VAR=valor`, execute `Set-Item -Path Env:VAR -Value valor`.
 - Substitua `rm -rf caminho` por `Remove-Item caminho -Recurse -Force`.

@@ -1,5 +1,6 @@
 ﻿import shutil
 from pathlib import Path
+from typing import Optional
 
 from loader import main as loader_main
 from normalizer import main as normalizer_main
@@ -10,8 +11,9 @@ CFG = ROOT / "cfg" / "profiles_map.yml"
 TOKENS = ROOT / "cfg" / "regex_tokens.yml"
 
 
-def copy_fixture(tmp_dir: Path, name: str) -> Path:
-    target = tmp_dir / name
+def copy_fixture(tmp_dir: Path, name: str, target_name: Optional[str] = None) -> Path:
+    target_name = target_name or name
+    target = tmp_dir / target_name
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(FIXTURES / name, target)
     return target

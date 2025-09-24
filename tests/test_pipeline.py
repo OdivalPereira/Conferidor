@@ -1,6 +1,8 @@
-import shutil
+﻿import shutil
 import json
+import argparse
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -11,14 +13,16 @@ from issues_engine import main as issues_main
 from ui_dataset_builder import main as dataset_main
 from export_xlsx import run as export_xlsx_run
 from export_pdf import run as export_pdf_run
+from run_pipeline import resolve_inputs
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
 CFG = ROOT / "cfg"
 
 
-def copy_fixture(tmp_dir: Path, name: str) -> Path:
-    target = tmp_dir / name
+def copy_fixture(tmp_dir: Path, name: str, target_name: Optional[str] = None) -> Path:
+    target_name = target_name or name
+    target = tmp_dir / target_name
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(FIXTURES / name, target)
     return target
@@ -163,3 +167,39 @@ def test_exports(tmp_path):
     pdf_path = result_pdf.get("pdf")
     html_path = result_pdf.get("html") or result_pdf.get("download_html")
     assert (pdf_path and Path(pdf_path).exists()) or (html_path and Path(html_path).exists())
+
+
+
+def test_autodetect_inputs(tmp_path):
+    dados_dir = tmp_path / "dados"
+    dados_dir.mkdir(parents=True, exist_ok=True)
+
+    nome_sucessor = "CONSULTA DE LAN" + "Ç" + "AMENTOS DA EMPRESA 534 - OXIGENIO MODELO INDUSTRIA E COMERCIO DE GASES LTDA.csv"
+    nome_entradas = "CONSULTA MOVIMENTO DE ENTRADAS - 534 - OXIGENIO MODELO INDUSTRIA E COMERCIO DE GASES LTDA.csv"
+    nome_saidas = "CONSULTA MOVIMENTO DE SA" + "Í" + "DAS - 534 - OXIGENIO MODELO INDUSTRIA E COMERCIO DE GASES LTDA.csv"
+    nome_servicos = "CONSULTA MOVIMENTO DE SERVI" + "Ç" + "OS - 534 - OXIGENIO MODELO INDUSTRIA E COMERCIO DE GASES LTDA.csv"
+    nome_fornecedores = "CONSULTA DE FORNECEDORES.csv"
+    nome_plano = "CONSULTA DO PLANO DE CONTAS 1 - DOURALEX - 9014 PARTICIPANTE.csv"
+
+    copy_fixture(dados_dir, "sucessor.csv", nome_sucessor)
+    copy_fixture(dados_dir, "suprema_entradas.csv", nome_entradas)
+    copy_fixture(dados_dir, "suprema_saidas.csv", nome_saidas)
+    copy_fixture(dados_dir, "suprema_servicos.csv", nome_servicos)
+    copy_fixture(dados_dir, "fornecedores.csv", nome_fornecedores)
+    copy_fixture(dados_dir, "plano_contas.csv", nome_plano)
+
+    args = argparse.Namespace(
+        sucessor=None,
+        entradas=None,
+        saidas=None,
+        servicos=None,
+        fornecedores=None,
+        plano=None,
+    )
+    inputs = resolve_inputs(args, dados_dir)
+    assert inputs["sucessor"].name == nome_sucessor
+    assert inputs["entradas"].name == nome_entradas
+    assert inputs["saidas"].name == nome_saidas
+    assert inputs["servicos"].name == nome_servicos
+    assert inputs["fornecedores"].name == nome_fornecedores
+    assert inputs["plano"].name == nome_plano

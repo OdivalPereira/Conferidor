@@ -3,8 +3,9 @@
 import argparse
 import json
 import sys
+import unicodedata
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence
+from typing import Dict, Iterable, List, Sequence, Optional, Set
 
 # Ensure src/ is importable
 ROOT_DIR = Path(__file__).resolve().parent
@@ -28,6 +29,45 @@ DEFAULT_INPUT_FILENAMES: Dict[str, str] = {
 }
 
 
+
+AUTO_INPUT_PATTERNS: Dict[str, list[list[str]]] = {
+    "sucessor": [["lancamento"], ["lancamentos"]],
+    "entradas": [["movimento", "entrada"], ["entrada"]],
+    "saidas": [["movimento", "saida"], ["saidas"], ["saida"]],
+    "servicos": [["movimento", "servico"], ["servicos"], ["servico"]],
+    "fornecedores": [["fornecedor"], ["fornecedores"]],
+    "plano": [["plano", "contas"], ["plano", "conta"]],
+}
+
+
+def _normalise_filename(name: str) -> str:
+    simplified = unicodedata.normalize("NFKD", name)
+    without_accents = "".join(ch for ch in simplified if not unicodedata.combining(ch))
+    return without_accents.lower()
+
+
+def _discover_input_file(dados_dir: Path, key: str, used: Set[Path]) -> Optional[Path]:
+    patterns = AUTO_INPUT_PATTERNS.get(key, [])
+    if not patterns:
+        return None
+    candidates: list[tuple[int, int, str, Path]] = []
+    for path in dados_dir.iterdir():
+        if not path.is_file() or path.suffix.lower() != ".csv":
+            continue
+        resolved = path.resolve()
+        if resolved in used:
+            continue
+        normalised = _normalise_filename(path.name)
+        best_match = 0
+        for keywords in patterns:
+            if all(keyword in normalised for keyword in keywords):
+                best_match = max(best_match, len(keywords))
+        if best_match:
+            candidates.append((best_match, len(path.name), path.name.lower(), resolved))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return candidates[0][3]
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the full reconciliation pipeline (loader → normalizer → matcher → issues → UI dataset)."
@@ -93,10 +133,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 def resolve_inputs(args: argparse.Namespace, dados_dir: Path) -> Dict[str, Path]:
     inputs: Dict[str, Path] = {}
+    used: Set[Path] = set()
     for key, filename in DEFAULT_INPUT_FILENAMES.items():
-        override: Path | None = getattr(args, key)
-        path = (override if override is not None else dados_dir / filename).resolve()
-        inputs[key] = path
+        override: Optional[Path] = getattr(args, key)
+        base_path = (dados_dir / filename).resolve()
+        chosen: Path
+        if override is not None:
+            chosen = override.resolve()
+        elif base_path.exists():
+            chosen = base_path
+        else:
+            discovered = _discover_input_file(dados_dir, key, used)
+            if discovered is not None:
+                chosen = discovered
+                sys.stdout.write(f"[pipeline] Auto-detected {key}: {chosen.name}\\n")
+            else:
+                chosen = base_path
+        inputs[key] = chosen
+        if chosen.exists():
+            used.add(chosen.resolve())
     return inputs
 
 
@@ -246,3 +301,5 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
