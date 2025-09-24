@@ -1,7 +1,8 @@
 ﻿import pandas as pd
 from pathlib import Path
+from datetime import datetime
 
-from normalizer import DatasetNormaliser, NormalizerConfig, parse_decimal, extract_first
+from normalizer import DatasetNormaliser, NormalizerConfig, parse_decimal, parse_date, extract_first
 
 CFG_PATH = Path(__file__).resolve().parents[1] / "cfg" / "profiles_map.yml"
 TOKENS_PATH = Path(__file__).resolve().parents[1] / "cfg" / "regex_tokens.yml"
@@ -38,3 +39,12 @@ def test_normalise_sucessor_builds_tokens():
     assert result.loc[0, "valor"] == 1000.0
     tokens = result.loc[0, "tokens"]
     assert "NFE_NUM_SERIE:12345" in tokens
+
+
+def test_parse_date_multiple_formats():
+    config = NormalizerConfig.load(CFG_PATH, TOKENS_PATH)
+    formats = config.date_formats
+    dt_br = parse_date("05/01/2025", formats)
+    dt_iso = parse_date("2025-01-05", formats)
+    assert dt_br == datetime(2025, 1, 5)
+    assert dt_iso == datetime(2025, 1, 5)
