@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pandas
+polars
+duckdb
+pyyaml
+python-dateutil
+xlsxwriter
+reportlab
+matplotlib
