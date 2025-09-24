@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>App de Conferência — UI</title>
+  <title>App de Conferencia - UI</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -139,7 +139,40 @@ function Toolbar({stats,filters,setFilters,onReload,onExportX,onExportP,loading}
   );
 }
 
-function Table({columns,items,sortBy,setSortBy,sortDir,setSortDir,onInspect,onManualStatus,onResetStatus}){
+function InspectorPanel({row,onClose,onMark,onReset}){
+  if(!row){
+    return null;
+  }
+  const info = [
+    {label: "Status atual", value: row.status || row["match.status"]},
+    {label: "Estrategia", value: row["match.strategy"]},
+    {label: "Score", value: row["match.score"]},
+    {label: "Sucessor", value: row["S.doc"]},
+    {label: "Fonte", value: row["F.doc"]},
+    {label: "Delta Valor", value: row["delta.valor"]},
+    {label: "Delta Dias", value: row["delta.dias"]},
+    {label: "Motivos", value: row.motivos}
+  ];
+  return React.createElement("div",{className:"mt-6 bg-white shadow-soft rounded-xl border border-slate-200"},
+    React.createElement("div",{className:"flex items-start justify-between px-4 py-3 border-b border-slate-200"},
+      React.createElement("h3",{className:"text-lg font-semibold"},"Detalhes da selecao"),
+      React.createElement("button",{className:"text-sm text-slate-500 hover:text-slate-700",onClick:onClose},"Fechar")
+    ),
+    React.createElement("div",{className:"px-4 py-4 grid gap-3 md:grid-cols-2"},
+      info.map((item,idx)=>React.createElement("div",{key:idx},
+        React.createElement("div",{className:"text-xs uppercase tracking-wide text-slate-500"}, item.label),
+        React.createElement("div",{className:"text-sm font-medium text-slate-800 break-words"}, item.value || "-")
+      ))
+    ),
+    React.createElement("div",{className:"px-4 pb-4 flex flex-wrap gap-2"},
+      React.createElement("button",{className:"px-3 py-1 rounded bg-emerald-100 text-emerald-800 text-sm",onClick:()=>onMark(row,"OK")},"Marcar OK"),
+      React.createElement("button",{className:"px-3 py-1 rounded bg-rose-100 text-rose-800 text-sm",onClick:()=>onMark(row,"DIVERGENCIA")},"Marcar Divergencia"),
+      React.createElement("button",{className:"px-3 py-1 rounded bg-slate-200 text-slate-700 text-sm",onClick:()=>onReset(row)},"Reverter")
+    )
+  );
+}
+
+function Table({columns,items,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect,onManualStatus,onResetStatus}){
   const setSort = (id)=>{
     if(sortBy===id){ setSortDir(sortDir==="asc"?"desc":"asc"); } else { setSortBy(id); setSortDir("desc"); }
   };
@@ -149,7 +182,7 @@ function Table({columns,items,sortBy,setSortBy,sortDir,setSortDir,onInspect,onMa
         React.createElement("thead",null,
           React.createElement("tr",null,
             React.createElement("th",{className:"text-left px-3 py-2 w-28"},"Status"),
-            React.createElement("th",{className:"text-left px-3 py-2 w-44"},"Ações"),
+            React.createElement("th",{className:"text-left px-3 py-2 w-44"},"Acoes"),
             columns.map(col=>React.createElement("th",{key:col.id,className:"text-left px-3 py-2 cursor-pointer",onClick:()=>setSort(col.id)}, col.label||col.id))
           )
         ),
@@ -158,13 +191,15 @@ function Table({columns,items,sortBy,setSortBy,sortDir,setSortDir,onInspect,onMa
             const s = (r.status||"").toUpperCase();
             const auto = (r.score ?? 0) >= 70;
             const cls = s==="OK"?"row-ok":(s==="ALERTA"?"row-alerta":(s==="DIVERGENCIA"?"row-div":"row-neutro"));
-            return React.createElement("tr",{key:r.id||idx,className:cls + " hover:bg-slate-100",style: auto?{outline:"2px solid #2563eb",outlineOffset:"-2px"}:{} },
+            const rowKey = resolveRowId(r) || idx;
+            const isSelected = selectedRowId && rowKey === selectedRowId;
+            return React.createElement("tr",{key:rowKey,className:cls + (isSelected?" ring-2 ring-indigo-400":"") + " hover:bg-slate-100",style: auto?{outline:"2px solid #2563eb",outlineOffset:"-2px"}:{} ,onClick:()=>onInspect && onInspect(r)},
               React.createElement("td",{className:"px-3 py-2 align-top"}, React.createElement(Badge,{status:s})),
               React.createElement("td",{className:"px-3 py-2 align-top"},
                 React.createElement("div",{className:"flex flex-col gap-1"},
-                  React.createElement("button",{className:"px-2 py-1 rounded bg-emerald-100 text-emerald-800 text-xs",onClick:()=>onManualStatus && onManualStatus(r,"OK")},"Marcar OK"),
-                  React.createElement("button",{className:"px-2 py-1 rounded bg-rose-100 text-rose-800 text-xs",onClick:()=>onManualStatus && onManualStatus(r,"DIVERGENCIA")},"Marcar Divergência"),
-                  React.createElement("button",{className:"px-2 py-1 rounded bg-slate-200 text-slate-700 text-xs",disabled:!r._manual,onClick:()=>onResetStatus && onResetStatus(r)},"Reverter")
+                  React.createElement("button",{className:"px-2 py-1 rounded bg-emerald-100 text-emerald-800 text-xs",onClick:(e)=>{e.stopPropagation(); onManualStatus && onManualStatus(r,"OK")}},"Marcar OK"),
+                  React.createElement("button",{className:"px-2 py-1 rounded bg-rose-100 text-rose-800 text-xs",onClick:(e)=>{e.stopPropagation(); onManualStatus && onManualStatus(r,"DIVERGENCIA")}},"Marcar Divergencia"),
+                  React.createElement("button",{className:"px-2 py-1 rounded bg-slate-200 text-slate-700 text-xs",disabled:!r._manual,onClick:(e)=>{e.stopPropagation(); onResetStatus && onResetStatus(r)}},"Reverter")
                 )
               ),
               columns.map(col=>{
@@ -191,11 +226,11 @@ function Paginator({offset,setOffset,limit,setLimit,total,go}){
   const pages = Math.max(1, Math.ceil(total/limit));
   return (
     React.createElement("div",{className:"flex items-center justify-between mt-3"},
-      React.createElement("div",null, `Mostrando ${Math.min(total, offset+1)}–${Math.min(total, offset+limit)} de ${total}`),
+      React.createElement("div",null, `Mostrando ${Math.min(total, offset+1)}-${Math.min(total, offset+limit)} de ${total}`),
       React.createElement("div",{className:"flex items-center gap-2"},
-        React.createElement("button",{disabled:!canPrev,onClick:()=>{setOffset(Math.max(0, offset-limit)); go();},className:"px-3 py-1 rounded bg-slate-200 disabled:opacity-50"},"◀"),
-        React.createElement("span",null, `Página ${page}/${pages}`),
-        React.createElement("button",{disabled:!canNext,onClick:()=>{setOffset(offset+limit); go();},className:"px-3 py-1 rounded bg-slate-200 disabled:opacity-50"},"▶"),
+        React.createElement("button",{disabled:!canPrev,onClick:()=>{setOffset(Math.max(0, offset-limit)); go();},className:"px-3 py-1 rounded bg-slate-200 disabled:opacity-50"},"<"),
+        React.createElement("span",null, `Pagina ${page}/${pages}`),
+        React.createElement("button",{disabled:!canNext,onClick:()=>{setOffset(offset+limit); go();},className:"px-3 py-1 rounded bg-slate-200 disabled:opacity-50"},">"),
         React.createElement("select",{className:"px-2 py-1 rounded bg-white border",value:limit,onChange:e=>{setLimit(parseInt(e.target.value,10)); setOffset(0); go();}},
           [50,100,200,500,1000].map(n=>React.createElement("option",{key:n,value:n}, n))
         )
@@ -223,20 +258,46 @@ function App(){
   const [sortDir,setSortDir] = useState("desc");
   const [limit,setLimit] = useState(100);
   const [offset,setOffset] = useState(0);
+  const [selectedRow,setSelectedRow] = useState(null);
+
+  const resolveRowId = useCallback((entry)=> entry?.id ?? [entry?.sucessor_idx, entry?.fonte_tipo, entry?.fonte_idx].filter(Boolean).join('-'), []);
+
+  const handleInspect = useCallback((row)=>{
+    if(!row){
+      setSelectedRow(null);
+      return;
+    }
+    setSelectedRow(row);
+  },[]);
+
+  useEffect(()=>{
+    if(!selectedRow){
+      return;
+    }
+    const rowKey = resolveRowId(selectedRow);
+    const latest = items.find(item=> resolveRowId(item) === rowKey);
+    if(!latest){
+      setSelectedRow(null);
+    }else if(latest !== selectedRow){
+      setSelectedRow(latest);
+    }
+  },[items, resolveRowId, selectedRow]);
+
+  const selectedRowId = selectedRow ? resolveRowId(selectedRow) : null;
 
   const columns = useMemo(()=> (schema?.columns || [
     {id:"strategy",label:"Regra",type:"text"},
     {id:"score",label:"Score",type:"number"},
     {id:"S.data",label:"Data (S)",type:"date"},
-    {id:"S.debito",label:"Débito",type:"text"},
-    {id:"S.credito",label:"Crédito",type:"text"},
-    {id:"S.doc",label:"Nº Docto (S)",type:"text"},
+    {id:"S.debito",label:"Debito",type:"text"},
+    {id:"S.credito",label:"Credito",type:"text"},
+    {id:"S.doc",label:"No Docto (S)",type:"text"},
     {id:"S.valor",label:"Valor (S)",type:"money"},
-    {id:"F.doc",label:"Nº Docto (F)",type:"text"},
+    {id:"F.doc",label:"No Docto (F)",type:"text"},
     {id:"F.valor",label:"Valor (F)",type:"money"},
     {id:"F.cfop",label:"CFOP",type:"text"},
-    {id:"delta.valor",label:"Δ Valor",type:"money"},
-    {id:"delta.dias",label:"Δ Dias",type:"number"},
+    {id:"delta.valor",label:"Delta Valor",type:"money"},
+    {id:"delta.dias",label:"Delta Dias",type:"number"},
     {id:"motivos",label:"Motivos",type:"text"}
   ]), [schema]);
 
@@ -247,7 +308,7 @@ function App(){
       const m = await api.get("/api/meta");
       setMeta(m);
     }catch(e){ console.error(e); }
-  },[]);
+  },[api]);
 
   const loadGrid = useCallback(async ()=>{
     setLoading(true); setError(null);
@@ -266,10 +327,10 @@ function App(){
       setTotal(res.total_filtered || 0);
     }catch(e){ setError(String(e)); setItems([]); setTotal(0); }
     finally{ setLoading(false); }
-  },[filters,status,sortBy,sortDir,limit,offset]);
+  },[api, filters.status, filters.fonte_tipo, filters.cfop, filters.q, sortBy, sortDir, limit, offset]);
 
-  useEffect(()=>{ loadMeta(); },[]);
-  useEffect(()=>{ loadGrid(); },[sortBy,sortDir,limit,offset,filters.status,filters.fonte_tipo,filters.cfop]);
+  useEffect(()=>{ loadMeta(); },[loadMeta]);
+  useEffect(()=>{ loadGrid(); },[loadGrid]);
 
   const exportX = async ()=>{
     try{
@@ -281,13 +342,11 @@ function App(){
   const exportP = async ()=>{
     try{
       const out = "relatorio_conferencia.pdf";
-      const res = await api.post("/api/export/pdf",{grid:"reconc_grid.csv",out,cliente:"Cliente",periodo:"Per?odo"});
+      const res = await api.post("/api/export/pdf",{grid:"reconc_grid.csv",out,cliente:"Cliente",periodo:"Periodo"});
       const link = res.download || res.download_html;
       if(link){ window.open(link,"_blank"); }
     }catch(e){ alert("Falha no export PDF: "+e); }
   };
-
-  const resolveRowId = (entry)=> entry?.id ?? [entry?.sucessor_idx, entry?.fonte_tipo, entry?.fonte_idx].filter(Boolean).join('-');
 
   const updateStats = (prevStatus, nextStatus)=>{
     if(!prevStatus || !nextStatus || prevStatus===nextStatus) return;
@@ -307,6 +366,7 @@ function App(){
     const targetStatus = (nextStatus || "").toUpperCase();
     const rowKey = resolveRowId(row);
     let previousStatus = null;
+    let updatedRow = null;
     setItems(prev=>prev.map(item=>{
       const key = resolveRowId(item);
       if(key !== rowKey) return item;
@@ -314,7 +374,7 @@ function App(){
       const original = item.original_status || previousStatus;
       const motivos = new Set((item.motivos || "").split(";").filter(Boolean));
       motivos.add("ajuste_manual");
-      return {
+      const updated = {
         ...item,
         status: targetStatus,
         "match.status": targetStatus,
@@ -322,7 +382,10 @@ function App(){
         _manual: true,
         original_status: original
       };
+      updatedRow = updated;
+      return updated;
     }));
+    if(updatedRow){ setSelectedRow(updatedRow); }
     if(previousStatus){ updateStats(previousStatus, targetStatus); }
   };
 
@@ -331,20 +394,24 @@ function App(){
     const rowKey = resolveRowId(row);
     let previousStatus = null;
     let originalStatus = null;
+    let updatedRow = null;
     setItems(prev=>prev.map(item=>{
       const key = resolveRowId(item);
       if(key !== rowKey) return item;
       previousStatus = (item.status || "").toUpperCase();
       originalStatus = (item.original_status || item["match.status"] || item.status || "").toUpperCase();
       const motivos = (item.motivos || "").split(";").filter(Boolean).filter(tag=>tag !== "ajuste_manual");
-      return {
+      const updated = {
         ...item,
         status: originalStatus,
         "match.status": originalStatus,
         motivos: motivos.join(";"),
         _manual: false
       };
+      updatedRow = updated;
+      return updated;
     }));
+    if(updatedRow){ setSelectedRow(updatedRow); }
     if(previousStatus && originalStatus){ updateStats(previousStatus, originalStatus); }
   };
 
@@ -352,7 +419,7 @@ function App(){
 
     React.createElement("div",{className:"max-w-[1400px] mx-auto p-4 md:p-6"},
       React.createElement("div",{className:"mb-4"},
-        React.createElement("h2",{className:"text-2xl font-semibold"},"App de Conferência — UI"),
+        React.createElement("h2",{className:"text-2xl font-semibold"},"App de Conferencia - UI"),
         React.createElement("p",{className:"text-slate-600"},"Carrega ", React.createElement("code",null,"ui_grid.jsonl"), " do servidor local e exibe a grade com filtros e exports.")
       ),
       React.createElement(Toolbar,{
@@ -365,7 +432,13 @@ function App(){
       }),
       error && React.createElement("div",{className:"p-3 rounded bg-rose-100 text-rose-800 mb-3"}, String(error)),
       React.createElement(Table,{
-        columns,items,sortBy,setSortBy,sortDir,setSortDir,onInspect:()=>{},onManualStatus: handleManualStatus,onResetStatus: handleResetStatus
+        columns,items,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect: handleInspect,onManualStatus: handleManualStatus,onResetStatus: handleResetStatus
+      }),
+      React.createElement(InspectorPanel,{
+        row: selectedRow,
+        onClose: ()=>setSelectedRow(null),
+        onMark: handleManualStatus,
+        onReset: handleResetStatus
       }),
       React.createElement(Paginator,{offset,setOffset,limit,setLimit,total,go:loadGrid})
     )

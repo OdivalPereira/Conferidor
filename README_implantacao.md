@@ -103,7 +103,8 @@ export DATA_DIR=out
 uvicorn src.ui_server:app --reload --port 8000
 ```
 Abra `src/ui_app.html` no navegador (duplo‑clique).  
-- Para outro host/porta, edite no HTML `const api = useApi("http://HOST:PORTA")`.
+- O HTML detecta automaticamente a variavel global `window.UI_API_BASE` (defina-a no console do navegador ou em um script antes de abrir o arquivo) ou o parametro `?api=http://host:porta` na URL; por padrao usa `http://localhost:8000`.
+- Clique em uma linha da grid para abrir o painel lateral e usar os botoes de "Marcar OK" ou "Marcar Divergencia"; o botao "Reverter" volta para o status original.
 
 ### 4.6 Exportação
 **Excel**:
