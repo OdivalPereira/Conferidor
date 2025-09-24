@@ -24,7 +24,6 @@
 |   |-- loader.py
 |   |-- matcher.py
 |   |-- normalizer.py
-|   |-- reconciler.py
 |   |-- ui_app.html
 |   |-- ui_dataset_builder.py
 |   -- ui_server.py
