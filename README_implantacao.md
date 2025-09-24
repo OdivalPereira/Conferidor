@@ -11,6 +11,12 @@
   pip install fastapi uvicorn pydantic pandas polars duckdb pyyaml python-dateutil xlsxwriter reportlab matplotlib
   ```
   > `reportlab` é opcional (gera PDF nativo). Sem ele, o export gera **HTML** equivalente.
+### Ambiente virtual (.venv)
+- Crie o ambiente com `python -m venv .venv`.
+- Ative no Windows PowerShell com `./.venv/Scripts/Activate.ps1`, no CMD com `./.venv/Scripts/activate.bat` e no Linux/macOS com `source .venv/bin/activate`.
+- Depois de ativar, execute `pip install -r requirements.txt`.
+- As tasks do VS Code e os scripts do projeto assumem `.venv/bin/python` (Unix) ou `.venv/Scripts/python.exe` (Windows); ajuste se usar outro nome de venv.
+
 
 ---
 
