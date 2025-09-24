@@ -1,4 +1,4 @@
-version: 1
+﻿version: 1
 defaults:
   delimiter: ";"
   decimal: ","
@@ -12,10 +12,10 @@ profiles:
     source: SUCESSOR
     detect:
       required_any:
-        - '(?i)^transa'
-        - '(?i)^d[ée]bito$'
-        - '(?i)^cr[ée]dito$'
-        - '(?i)^n[ºo]\s*doct?o$'
+        - '(?i)^transa(?:c|\u00e7)(?:a|\u00e3)o$'
+        - '(?i)^d(?:e|\u00e9)bito$'
+        - '(?i)^cr(?:e|\u00e9)dito$'
+        - '(?i)^n(?:\u00ba|\u00b0)\s*doct?o$'
     csv:
       delimiter: ";"
       decimal: "."
@@ -24,56 +24,56 @@ profiles:
       data:
         - '(?i)^data$'
       debito:
-        - '(?i)^d[ée]bito$'
+        - '(?i)^d(?:e|\u00e9)bito$'
       credito:
-        - '(?i)^cr[ée]dito$'
+        - '(?i)^cr(?:e|\u00e9)dito$'
       part_d:
         - '(?i)^participante\s*d$'
       part_c:
         - '(?i)^participante\s*c$'
       doc:
-        - '(?i)^n[ºo]\s*doct?o$'
+        - '(?i)^n(?:\u00ba|\u00b0)\s*doct?o$'
         - '(?i)^chave$'
       valor:
         - '(?i)^valor$'
       historico:
         - '(?i)^hist$'
       transacao_id:
-        - '(?i)^transa'
-        - '(?i)^transa[cç][aã]o$'
+        - '(?i)^transa(?:c|\u00e7)(?:a|\u00e3)o$'
+        - '(?i)^chave$'
 
   - id: suprema_entradas_v1
     source: SUPREMA_ENTRADA
     detect:
       required_any:
         - '(?i)^chave$'
-        - '(?i)^nome\s*fornecedor$'
-        - '(?i)^valor\s*cont'
+        - '(?i)^nome\s+fornecedor$'
+        - '(?i)^valor\s+cont(?:a|\u00e1)bil$'
     map:
       data:
-        - '(?i)^data\s*emiss[aã]o$'
-        - '(?i)^data\s*entrada$'
+        - '(?i)^data\s+emiss(?:ao|\u00e3)o$'
+        - '(?i)^data\s+entrada$'
       doc:
         - '(?i)^documento$'
       participante:
-        - '(?i)^nome\s*fornecedor$'
+        - '(?i)^nome\s+fornecedor$'
         - '(?i)^fornecedor$'
       valor:
-        - '(?i)^valor\s*cont'
+        - '(?i)^valor\s+cont(?:a|\u00e1)bil$'
       cfop:
         - '(?i)^cfop$'
       modelo:
         - '(?i)^modelo$'
       situacao:
-        - '(?i)^situa[cç][aã]o\s+do\s+documento$'
+        - '(?i)^situa(?:c|\u00e7)(?:a|\u00e3)o\s+do\s+documento$'
       debito_alias:
-        - '(?i)^d[ée]bito$'
+        - '(?i)^d(?:e|\u00e9)bito$'
       credito_alias:
-        - '(?i)^cr[ée]dito$'
+        - '(?i)^cr(?:e|\u00e9)dito$'
       condicao:
-        - '(?i)^condi[cç][oõ]es$'
+        - '(?i)^condi(?:c|\u00e7)(?:o|\u00f5)es$'
       chave_xml:
-        - '(?i)^chave\s*nf-e/ct-e/nfc-e/bp-e$'
+        - '(?i)^chave\s+nf-e/ct-e/nfc-e/bp-e$'
     fixed:
       fonte_tipo: ENTRADA
     csv:
@@ -86,32 +86,32 @@ profiles:
     detect:
       required_any:
         - '(?i)^chave$'
-        - '(?i)^nome\s*cliente$'
-        - '(?i)^valor\s*cont'
+        - '(?i)^nome\s+cliente$'
+        - '(?i)^valor\s+cont(?:a|\u00e1)bil$'
     map:
       data:
-        - '(?i)^data\s*emiss[aã]o$'
+        - '(?i)^data\s+emiss(?:ao|\u00e3)o$'
       doc:
         - '(?i)^documento$'
       participante:
-        - '(?i)^nome\s*cliente$'
+        - '(?i)^nome\s+cliente$'
         - '(?i)^cliente$'
       valor:
-        - '(?i)^valor\s*cont'
+        - '(?i)^valor\s+cont(?:a|\u00e1)bil$'
       cfop:
         - '(?i)^cfop$'
       modelo:
         - '(?i)^modelo$'
       situacao:
-        - '(?i)^situa[cç][aã]o\s+do\s+documento$'
+        - '(?i)^situa(?:c|\u00e7)(?:a|\u00e3)o\s+do\s+documento$'
       debito_alias:
-        - '(?i)^d[ée]bito$'
+        - '(?i)^d(?:e|\u00e9)bito$'
       credito_alias:
-        - '(?i)^cr[ée]dito$'
+        - '(?i)^cr(?:e|\u00e9)dito$'
       condicao:
-        - '(?i)^condi[cç][oõ]es$'
+        - '(?i)^condi(?:c|\u00e7)(?:o|\u00f5)es$'
       chave_xml:
-        - '(?i)^chave\s*nf-e/ct-e/nfc-e/bp-e$'
+        - '(?i)^chave\s+nf-e/ct-e/nfc-e/bp-e$'
     fixed:
       fonte_tipo: SAIDA
     csv:
@@ -123,29 +123,29 @@ profiles:
     source: SUPREMA_SERVICO
     detect:
       required_any:
-        - '(?i)^nr\.?\s*doc\.$'
+        - '(?i)^nr\.\s*doc\.$'
         - '(?i)^cliente$'
-        - '(?i)^valor\s*cont'
+        - '(?i)^valor\s+cont(?:a|\u00e1)bil$'
     map:
       data:
-        - '(?i)^data\s*emiss[aã]o$'
+        - '(?i)^data\s+emiss(?:ao|\u00e3)o$'
       doc:
-        - '(?i)^nr\.?\s*doc\.$'
-        - '(?i)^chave\s*nf-e/nfc-e$'
+        - '(?i)^nr\.\s*doc\.$'
+        - '(?i)^chave\s+nf-e/nfc-e$'
       participante:
         - '(?i)^cliente$'
       valor:
-        - '(?i)^valor\s*cont'
+        - '(?i)^valor\s+cont(?:a|\u00e1)bil$'
       cfop:
-        - '(?i)^nat\.?\s*opera'
+        - '(?i)^nat\.\s*opera(?:c|\u00e7)(?:ao|\u00e3)o$'
       situacao:
-        - '(?i)^situa[cç][aã]o$'
+        - '(?i)^situa(?:c|\u00e7)(?:a|\u00e3)o$'
       debito_alias:
-        - '(?i)^d[ée]bito$'
+        - '(?i)^d(?:e|\u00e9)bito$'
       credito_alias:
-        - '(?i)^cr[ée]dito$'
+        - '(?i)^cr(?:e|\u00e9)dito$'
       condicao:
-        - '(?i)^cond\.?\s*pagto$'
+        - '(?i)^cond\.\s*pagto$'
     fixed:
       fonte_tipo: SERVICO
     csv:
@@ -159,31 +159,39 @@ profiles:
       required_any:
         - '(?i)fornecedor'
         - '(?i)cnpj'
+    csv:
+      delimiter: ";"
+      decimal: "."
+      encoding: "latin1"
     map:
       codigo:
-        - '(?i)cod'
+        - '(?i)^c(?:o|\u00f3)digo$'
       nome:
-        - '(?i)nome'
-        - '(?i)razao'
+        - '(?i)^nome$'
+        - '(?i)^raz(?:a|\u00e3)o\s+social$'
       cnpj:
-        - '(?i)cnpj'
+        - '(?i)^cpf\s*/\s*cnpj$'
 
   - id: plano_contas_v1
     source: PLANO_CONTAS
     detect:
       required_any:
-        - '(?i)plano'
-        - '(?i)conta'
+        - '(?i)^c(?:o|\u00f3)digo$'
+        - '(?i)^classifica'
+    csv:
+      delimiter: ";"
+      decimal: "."
+      encoding: "latin1"
     map:
       codigo:
-        - '(?i)cod|conta'
+        - '(?i)^c(?:o|\u00f3)digo$'
       alias:
-        - '(?i)alias'
-        - '(?i)apelido'
-        - '(?i)reduzido'
+        - '(?i)^apelido$'
+        - '(?i)^alias$'
+        - '(?i)^nome\s+reduzido$'
       nome:
-        - '(?i)nome'
-        - '(?i)descricao'
+        - '(?i)^nome$'
+        - '(?i)^descri(?:c|\u00e7)(?:a|\u00e3)o$'
       natureza:
-        - '(?i)natureza'
-        - '(?i)tipo'
+        - '(?i)^natureza$'
+        - '(?i)^tipo$'
