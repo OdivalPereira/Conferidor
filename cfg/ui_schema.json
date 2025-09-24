@@ -55,24 +55,6 @@
       "filter": true
     },
     {
-      "id": "S.debito",
-      "label": "Débito",
-      "type": "text",
-      "width": 230,
-      "group": "Sucessor",
-      "sortable": true,
-      "filter": true
-    },
-    {
-      "id": "S.credito",
-      "label": "Crédito",
-      "type": "text",
-      "width": 230,
-      "group": "Sucessor",
-      "sortable": true,
-      "filter": true
-    },
-    {
       "id": "S.part_d",
       "label": "Part. D",
       "type": "text",
