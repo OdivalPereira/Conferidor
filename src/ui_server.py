@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
+import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,10 +27,12 @@ except Exception:  # pragma: no cover
 
 APP_TITLE = "Conferidor UI"
 DATA_DIR = Path(os.environ.get("DATA_DIR", "out")).expanduser().resolve()
+UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR", "dados")).expanduser().resolve()
 SCHEMA_PATH = Path(os.environ.get("UI_SCHEMA", "cfg/ui_schema.json")).expanduser().resolve()
 UI_APP_PATH = Path(__file__).resolve().parent / "ui_app.html"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title=APP_TITLE)
 app.add_middleware(
@@ -90,6 +97,22 @@ def _ui_app_html() -> str:
     if not UI_APP_PATH.exists():
         raise HTTPException(500, detail=f"ui_app.html not found at {UI_APP_PATH}")
     return UI_APP_PATH.read_text(encoding="utf-8")
+
+
+def get_uploads_root() -> Path:
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    return UPLOADS_DIR
+
+
+def _ensure_csv(filename: Optional[str]) -> None:
+    if not filename:
+        raise HTTPException(400, detail="Missing filename")
+    if Path(filename).suffix.lower() != ".csv":
+        raise HTTPException(400, detail=f"Unsupported file extension for {filename}")
+
+
+def _now_iso() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -193,6 +216,64 @@ def api_files() -> Dict[str, object]:
             )
     items.sort(key=lambda item: item["path"].lower())
     return {"count": len(items), "items": items}
+
+
+@app.post("/api/uploads")
+def api_uploads(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+    uploads_root: Path = Depends(get_uploads_root),
+) -> Dict[str, object]:
+    if not files:
+        raise HTTPException(400, detail="No files received")
+
+    for upload in files:
+        _ensure_csv(upload.filename)
+
+    job_id = uuid4().hex
+    job_dir = uploads_root / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_files: List[Dict[str, object]] = []
+    created_at = _now_iso()
+
+    for upload in files:
+        background_tasks.add_task(upload.file.close)
+        filename = upload.filename
+        _ensure_csv(filename)
+        safe_name = Path(filename).name
+        dest_path = job_dir / safe_name
+
+        hasher = hashlib.sha256()
+        with tempfile.NamedTemporaryFile("wb", delete=False, dir=job_dir) as tmp:
+            while True:
+                chunk = upload.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                hasher.update(chunk)
+                tmp.write(chunk)
+        shutil.move(tmp.name, dest_path)
+
+        manifest_files.append(
+            {
+                "original_name": filename,
+                "stored_name": safe_name,
+                "hash": hasher.hexdigest(),
+                "timestamp": _now_iso(),
+            }
+        )
+
+    manifest = {
+        "job_id": job_id,
+        "created_at": created_at,
+        "files": manifest_files,
+    }
+    manifest_path = job_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {"job_id": job_id, "file_count": len(manifest_files)}
 
 
 @app.post("/api/export/xlsx")

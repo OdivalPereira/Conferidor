@@ -1,5 +1,6 @@
 fastapi
 uvicorn
+httpx
 pandas
 polars
 duckdb
@@ -8,3 +9,4 @@ python-dateutil
 xlsxwriter
 reportlab
 matplotlib
+python-multipart
