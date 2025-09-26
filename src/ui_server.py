@@ -55,6 +55,33 @@ JOB_TASKS: Dict[str, asyncio.Task[Any]] = {}
 JOB_CANCEL_EVENTS: Dict[str, asyncio.Event] = {}
 
 
+def _count_files(path: Path) -> int:
+    if path.is_file() or path.is_symlink():
+        return 1
+    count = 0
+    for entry in path.rglob("*"):
+        if entry.is_file() or entry.is_symlink():
+            count += 1
+    return count
+
+
+def _safe_rmtree(path: Path) -> int:
+    if not path.exists():
+        return 0
+    removed = _count_files(path)
+    shutil.rmtree(path)
+    return removed
+
+
+def _delete_path(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_dir() and not path.is_symlink():
+        return _safe_rmtree(path)
+    path.unlink()
+    return 1
+
+
 class ProcessPayload(BaseModel):
     job_id: str
     dados_dir: Optional[str] = None
@@ -523,6 +550,61 @@ def api_files() -> Dict[str, object]:
             )
     items.sort(key=lambda item: item["path"].lower())
     return {"count": len(items), "items": items}
+
+
+@app.delete("/api/data")
+def api_delete_data() -> Dict[str, object]:
+    active_jobs = {
+        job_id
+        for job_id, task in JOB_TASKS.items()
+        if not getattr(task, "done", lambda: True)()
+    }
+
+    known_statuses: Dict[str, Optional[Dict[str, Any]]] = {}
+    if JOBS_DIR.exists():
+        for entry in JOBS_DIR.iterdir():
+            if entry.is_dir():
+                job_id = entry.name
+                known_statuses[job_id] = _load_job_status(job_id)
+
+    active_statuses = {"queued", "running", "cancelling"}
+    for job_id, status in known_statuses.items():
+        state = str(status.get("status", "") if status else "").lower()
+        if state in active_statuses:
+            active_jobs.add(job_id)
+
+    removed_files = 0
+
+    for entry in DATA_DIR.iterdir():
+        if entry == JOBS_DIR:
+            continue
+        if entry.name in active_jobs:
+            continue
+        removed_files += _delete_path(entry)
+
+    if JOBS_DIR.exists():
+        for entry in JOBS_DIR.iterdir():
+            if entry.name in active_jobs:
+                continue
+            removed_files += _delete_path(entry)
+
+    if UPLOADS_DIR.exists():
+        for entry in UPLOADS_DIR.iterdir():
+            if not entry.is_dir():
+                continue
+            job_id = entry.name
+            if job_id in active_jobs:
+                continue
+            status = known_statuses.get(job_id)
+            state = str(status.get("status", "") if status else "").lower()
+            if not status or state in active_statuses:
+                continue
+            removed_files += _delete_path(entry)
+
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+    return {"removed_files": removed_files}
 
 
 @app.post("/api/uploads")
