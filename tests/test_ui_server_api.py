@@ -45,3 +45,10 @@ def test_api_grid_sorts_scores_with_none(reload_ui_server):
     descending = module.api_grid(sort_by="score", sort_dir="desc", **base_kwargs)
     desc_scores = [item["score"] for item in descending["items"]]
     assert desc_scores == [None, 90, 75]
+
+
+def test_index_serves_ui_html(reload_ui_server):
+    module, _ = reload_ui_server
+    response = module.index()
+    assert response.status_code == 200
+    assert 'id="root"' in response.body.decode("utf-8")
