@@ -23,6 +23,7 @@ except Exception:  # pragma: no cover
 APP_TITLE = "Conferidor UI"
 DATA_DIR = Path(os.environ.get("DATA_DIR", "out")).expanduser().resolve()
 SCHEMA_PATH = Path(os.environ.get("UI_SCHEMA", "cfg/ui_schema.json")).expanduser().resolve()
+UI_APP_PATH = Path(__file__).resolve().parent / "ui_app.html"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -87,30 +88,9 @@ def _relative_download(path: Path) -> Optional[str]:
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
-    html = f"""
-    <html><head><meta charset='utf-8'><title>{APP_TITLE}</title>
-    <style>
-      body {{ font-family: system-ui, sans-serif; margin: 0; padding: 24px; background: #f9fafb; color: #1f2937; }}
-      a {{ color: #2563eb; text-decoration: none; }}
-      .card {{ background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(15,23,42,0.08); }}
-    </style></head><body>
-      <h1>{APP_TITLE}</h1>
-      <div class="card">
-        <p><strong>DATA_DIR:</strong> {DATA_DIR}</p>
-        <p>Downloads: <a href="/files/" target="_blank">/files/</a></p>
-      </div>
-      <div class="card">
-        <h3>APIs</h3>
-        <ul>
-          <li><a href="/api/health" target="_blank">/api/health</a></li>
-          <li><a href="/api/schema" target="_blank">/api/schema</a></li>
-          <li><a href="/api/meta" target="_blank">/api/meta</a></li>
-          <li><a href="/api/grid?limit=50" target="_blank">/api/grid</a></li>
-          <li><a href="/api/files" target="_blank">/api/files</a></li>
-        </ul>
-      </div>
-    </body></html>
-    """
+    if not UI_APP_PATH.exists():
+        raise HTTPException(500, detail=f"ui_app.html not found at {UI_APP_PATH}")
+    html = UI_APP_PATH.read_text(encoding="utf-8")
     return HTMLResponse(html)
 
 
