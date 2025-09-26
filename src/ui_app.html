@@ -172,7 +172,7 @@ function InspectorPanel({row,onClose,onMark,onReset}){
   );
 }
 
-function Table({columns,items,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect,onManualStatus,onResetStatus}){
+function Table({columns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect,onManualStatus,onResetStatus}){
   const setSort = (id)=>{
     if(sortBy===id){ setSortDir(sortDir==="asc"?"desc":"asc"); } else { setSortBy(id); setSortDir("desc"); }
   };
@@ -191,7 +191,7 @@ function Table({columns,items,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,
             const s = (r.status||"").toUpperCase();
             const auto = (r.score ?? 0) >= 70;
             const cls = s==="OK"?"row-ok":(s==="ALERTA"?"row-alerta":(s==="DIVERGENCIA"?"row-div":"row-neutro"));
-            const rowKey = resolveRowId(r) || idx;
+            const rowKey = (resolveRowId && resolveRowId(r)) ?? idx;
             const isSelected = selectedRowId && rowKey === selectedRowId;
             return React.createElement("tr",{key:rowKey,className:cls + (isSelected?" ring-2 ring-indigo-400":"") + " hover:bg-slate-100",style: auto?{outline:"2px solid #2563eb",outlineOffset:"-2px"}:{} ,onClick:()=>onInspect && onInspect(r)},
               React.createElement("td",{className:"px-3 py-2 align-top"}, React.createElement(Badge,{status:s})),
@@ -432,7 +432,7 @@ function App(){
       }),
       error && React.createElement("div",{className:"p-3 rounded bg-rose-100 text-rose-800 mb-3"}, String(error)),
       React.createElement(Table,{
-        columns,items,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect: handleInspect,onManualStatus: handleManualStatus,onResetStatus: handleResetStatus
+        columns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect: handleInspect,onManualStatus: handleManualStatus,onResetStatus: handleResetStatus
       }),
       React.createElement(InspectorPanel,{
         row: selectedRow,
