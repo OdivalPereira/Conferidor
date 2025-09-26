@@ -273,11 +273,22 @@ class Candidate:
 def load_table_generic(path: Optional[str]) -> pd.DataFrame:
     if not path:
         return pd.DataFrame()
+
     fpath = Path(path)
+    suffix = fpath.suffix.lower()
+
+    if suffix == ".parquet":
+        csv_fallback = fpath.with_suffix(".csv")
+        try:
+            return pd.read_parquet(fpath)
+        except (FileNotFoundError, ImportError, ValueError):
+            if csv_fallback.exists():
+                return pd.read_csv(csv_fallback, dtype=str, keep_default_na=False, encoding="utf-8")
+            return pd.DataFrame()
+
     if not fpath.exists():
         return pd.DataFrame()
-    if fpath.suffix.lower() == ".parquet":
-        return pd.read_parquet(fpath)
+
     return pd.read_csv(fpath, dtype=str, keep_default_na=False, encoding="utf-8")
 
 
