@@ -228,7 +228,7 @@ function UploadModal({open,onClose,onConfirm,submitting,error}){
   );
 }
 
-function Toolbar({stats,filters,setFilters,onReload,onExportX,onExportP,loading}){
+function Toolbar({stats,filters,setFilters,onReload,onExportX,onExportP,loading,disabled}){
   return (
     React.createElement("div",{className:"flex flex-col gap-3 md:flex-row md:items-end md:justify-between mb-4"},
       React.createElement("div",{className:"grid grid-cols-2 md:grid-cols-6 gap-3"},
@@ -259,23 +259,23 @@ function Toolbar({stats,filters,setFilters,onReload,onExportX,onExportP,loading}
       ),
       React.createElement("div",{className:"flex flex-col gap-2 md:w-[520px]"},
         React.createElement("div",{className:"flex gap-2"},
-          React.createElement("select",{className:"px-2 py-2 rounded-lg bg-white border w-40",value:filters.status,onChange:e=>setFilters(f=>({...f,status:e.target.value}))},
+          React.createElement("select",{className:"px-2 py-2 rounded-lg bg-white border w-40 disabled:opacity-50",value:filters.status,disabled,onChange:e=>setFilters(f=>({...f,status:e.target.value}))},
             React.createElement("option",{value:""},"Status — todos"),
             ["OK","ALERTA","DIVERGENCIA","SEM_FONTE","SEM_SUCESSOR"].map(s=>React.createElement("option",{key:s,value:s},s))
           ),
-          React.createElement("select",{className:"px-2 py-2 rounded-lg bg-white border w-40",value:filters.fonte_tipo,onChange:e=>setFilters(f=>({...f,fonte_tipo:e.target.value}))},
+          React.createElement("select",{className:"px-2 py-2 rounded-lg bg-white border w-40 disabled:opacity-50",value:filters.fonte_tipo,disabled,onChange:e=>setFilters(f=>({...f,fonte_tipo:e.target.value}))},
             React.createElement("option",{value:""},"Fonte — todas"),
             ["ENTRADA","SAIDA","SERVICO"].map(s=>React.createElement("option",{key:s,value:s},s))
           ),
-          React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1",placeholder:"CFOP",value:filters.cfop,onChange:e=>setFilters(f=>({...f,cfop:e.target.value}))})
+          React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1 disabled:opacity-50",placeholder:"CFOP",value:filters.cfop,disabled,onChange:e=>setFilters(f=>({...f,cfop:e.target.value}))})
         ),
         React.createElement("div",{className:"flex gap-2"},
-          React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1",placeholder:"Buscar (histórico, doc, tags)...",value:filters.q,onChange:e=>setFilters(f=>({...f,q:e.target.value}))}),
-          React.createElement("button",{onClick:onReload,disabled:loading,className:"px-3 py-2 rounded-lg bg-slate-900 text-white disabled:opacity-50"}, loading?"Carregando...":"Atualizar")
+          React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1 disabled:opacity-50",placeholder:"Buscar (histórico, doc, tags)...",value:filters.q,disabled,onChange:e=>setFilters(f=>({...f,q:e.target.value}))}),
+          React.createElement("button",{onClick:onReload,disabled:loading||disabled,className:"px-3 py-2 rounded-lg bg-slate-900 text-white disabled:opacity-50 disabled:cursor-not-allowed"}, loading?"Carregando...":"Atualizar")
         ),
         React.createElement("div",{className:"flex gap-2"},
-          React.createElement("button",{onClick:onExportX,className:"px-3 py-2 rounded-lg bg-emerald-600 text-white"}, "Exportar Excel"),
-          React.createElement("button",{onClick:onExportP,className:"px-3 py-2 rounded-lg bg-indigo-600 text-white"}, "Exportar PDF"),
+          React.createElement("button",{onClick:onExportX,disabled:disabled,className:"px-3 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"}, "Exportar Excel"),
+          React.createElement("button",{onClick:onExportP,disabled:disabled,className:"px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"}, "Exportar PDF"),
           React.createElement("a",{href:"/files/",target:"_blank",className:"px-3 py-2 rounded-lg bg-slate-200"}, "Arquivos")
         )
       )
@@ -420,6 +420,9 @@ function App(){
   const [showUploadModal,setShowUploadModal] = useState(false);
   const [uploading,setUploading] = useState(false);
   const [uploadError,setUploadError] = useState(null);
+  const [currentJobId,setCurrentJobId] = useState(null);
+  const [jobStatus,setJobStatus] = useState(null);
+  const jobRunning = Boolean(currentJobId) && ["running","queued","pending","processing","in_progress"].includes(String(jobStatus||"").toLowerCase());
 
   const resolveRowId = useCallback((entry)=> entry?.id ?? [entry?.sucessor_idx, entry?.fonte_tipo, entry?.fonte_idx].filter(Boolean).join('-'), []);
 
@@ -509,9 +512,30 @@ function App(){
     setUploading(true);
     setUploadError(null);
     try{
-      await api.upload("/api/uploads",formData);
-      await loadMeta();
-      await loadGrid();
+      const uploadRes = await api.upload("/api/uploads",formData);
+      const jobId = uploadRes?.job_id;
+      if(jobId){
+        let initialStatus = uploadRes?.status || null;
+        try{
+          const processRes = await api.post("/api/process",{job_id: jobId});
+          initialStatus = processRes?.status || initialStatus || "running";
+        }catch(processErr){
+          const message = processErr && processErr.message ? processErr.message : String(processErr);
+          setUploadError(message);
+          return;
+        }
+        setCurrentJobId(jobId);
+        setJobStatus(initialStatus);
+        if(String(initialStatus||"").toLowerCase() === "success"){
+          await loadMeta();
+          await loadGrid();
+          setCurrentJobId(null);
+          setJobStatus(null);
+        }
+      }else{
+        await loadMeta();
+        await loadGrid();
+      }
       setShowUploadModal(false);
     }catch(err){
       const message = err && err.message ? err.message : String(err);
@@ -610,8 +634,47 @@ function App(){
     if(previousStatus && originalStatus){ updateStats(previousStatus, originalStatus); }
   };
 
-  const toolbarStats = useMemo(()=> computeToolbarStats(meta),[meta]);
+  useEffect(()=>{
+    if(!currentJobId){
+      return;
+    }
+    let cancelled = false;
+    let timerId = null;
+    const poll = async ()=>{
+      try{
+        const res = await api.get(`/api/process/${currentJobId}`);
+        if(cancelled){
+          return;
+        }
+        const status = res?.status || null;
+        setJobStatus(status);
+        const normalized = String(status||"").toLowerCase();
+        if(normalized === "success"){
+          await Promise.all([loadMeta(), loadGrid()]);
+          if(cancelled){
+            return;
+          }
+          if(timerId){ clearInterval(timerId); timerId = null; }
+          setCurrentJobId(null);
+          setJobStatus(null);
+        }else if(normalized === "failed" || normalized === "error"){
+          if(timerId){ clearInterval(timerId); timerId = null; }
+          setCurrentJobId(null);
+        }
+      }catch(pollErr){
+        console.error("Falha no polling do processamento", pollErr);
+      }
+    };
+    poll();
+    timerId = setInterval(poll, 4000);
+    return ()=>{
+      cancelled = true;
+      if(timerId){ clearInterval(timerId); }
+    };
+  },[api, currentJobId, loadGrid, loadMeta]);
 
+  const toolbarStats = useMemo(()=> computeToolbarStats(meta),[meta]);
+  
   return (
 
     React.createElement("div",{className:"max-w-[1400px] mx-auto p-4 md:p-6"},
@@ -623,10 +686,13 @@ function App(){
         React.createElement("div",{className:"flex gap-2"},
           React.createElement("button",{
             onClick:openUploadModal,
-            disabled:uploading,
+            disabled:uploading || jobRunning,
             className:"rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
-          }, uploading?"Processando...":"Processar")
+          }, (uploading || jobRunning)?"Processando...":"Processar")
         )
+      ),
+      jobRunning && React.createElement("div",{className:"mb-3 rounded-lg bg-indigo-50 px-4 py-3 text-sm text-indigo-800"},
+        `Processamento em andamento (job ${currentJobId}) — status: ${jobStatus || "..."}`
       ),
       React.createElement(Toolbar,{
         stats: toolbarStats ?? computeToolbarStats(meta),
@@ -634,7 +700,8 @@ function App(){
         onReload:()=>{ setOffset(0); loadGrid(); },
         onExportX: exportX,
         onExportP: exportP,
-        loading
+        loading,
+        disabled: jobRunning
       }),
       error && React.createElement("div",{className:"p-3 rounded bg-rose-100 text-rose-800 mb-3"}, String(error)),
       React.createElement(Table,{
