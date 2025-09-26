@@ -47,8 +47,13 @@ def test_api_grid_sorts_scores_with_none(reload_ui_server):
     assert desc_scores == [None, 90, 75]
 
 
-def test_index_serves_ui_html(reload_ui_server):
+def test_ui_app_endpoint_serves_html(reload_ui_server):
     module, _ = reload_ui_server
-    response = module.index()
-    assert response.status_code == 200
-    assert 'id="root"' in response.body.decode("utf-8")
+
+    root_response = module.index()
+    assert root_response.status_code == 200
+    assert 'id="root"' in root_response.body.decode("utf-8")
+
+    app_response = module.ui_app()
+    assert app_response.status_code == 200
+    assert 'id="root"' in app_response.body.decode("utf-8")
