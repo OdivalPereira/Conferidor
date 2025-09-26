@@ -72,6 +72,8 @@ const REQUIRED_UPLOADS = [
   {type: "plano", label: "Plano de Contas", hint: "Ex: plano_contas.csv"}
 ];
 
+const JOB_ACTIVE_STATES = new Set(["queued","running","pending","processing","in_progress","cancelling"]);
+
 const DEFAULT_COLUMNS = [
   {id:"strategy",label:"Regra",type:"text"},
   {id:"score",label:"Score",type:"number"},
@@ -87,6 +89,130 @@ const DEFAULT_COLUMNS = [
   {id:"delta.dias",label:"Delta Dias",type:"number"},
   {id:"motivos",label:"Motivos",type:"text"}
 ];
+
+function resolveApiUrl(base, path){
+  if(!path){
+    return null;
+  }
+  const href = String(path);
+  if(/^https?:\/\//i.test(href)){
+    return href;
+  }
+  const safeBase = (base || "").replace(/\/$/, "");
+  const safePath = href.replace(/^\//, "");
+  return safeBase ? `${safeBase}/${safePath}` : `/${safePath}`;
+}
+
+function JobProgressPanel({jobId,status,apiBase,onCancel,canceling}){
+  if(!jobId || !status){
+    return null;
+  }
+  const normalized = String(status.status || "").toLowerCase();
+  const progress = status.progress || {};
+  let percentValue = null;
+  if(progress && Object.prototype.hasOwnProperty.call(progress,"percent")){
+    const raw = progress.percent;
+    const num = typeof raw === "number" ? raw : Number(raw);
+    if(!Number.isNaN(num)){
+      percentValue = Math.max(0, Math.min(100, num));
+    }
+  }
+  if(percentValue === null && typeof progress.completed === "number" && typeof progress.total === "number" && progress.total){
+    const computed = (progress.completed / progress.total) * 100;
+    if(!Number.isNaN(computed)){
+      percentValue = Math.max(0, Math.min(100, computed));
+    }
+  }
+  const percentText = percentValue !== null ? `${percentValue.toFixed(Math.abs(percentValue) < 10 ? 1 : 0)}%` : null;
+  const completed = typeof progress.completed === "number" ? progress.completed : null;
+  const total = typeof progress.total === "number" ? progress.total : null;
+  const steps = Array.isArray(progress.steps) && progress.steps.length ? progress.steps : (Array.isArray(status.logs) ? status.logs : []);
+  const lastLog = Array.isArray(status.logs) && status.logs.length ? status.logs[status.logs.length - 1] : null;
+  const currentMessage = status.message || (lastLog && (lastLog.message || lastLog.label || lastLog.name)) || null;
+  const cancelRequested = Boolean(status.cancel_requested) || normalized === "cancelling";
+  const disableCancel = cancelRequested || normalized === "success" || normalized === "error" || normalized === "cancelled";
+  const logUrl = resolveApiUrl(apiBase, status.log_url);
+
+  const renderStep = (step, index)=>{
+    if(step==null){
+      return null;
+    }
+    const key = typeof step === "object" && step ? step.id || step.name || step.label || step.timestamp || index : index;
+    let level = null;
+    let text = null;
+    if(typeof step === "string"){
+      text = step;
+    }else if(typeof step === "object"){
+      level = step.level || step.status_level || step.status;
+      const parts = [];
+      if(step.timestamp){ parts.push(step.timestamp); }
+      const core = step.message || step.label || step.name;
+      if(core){ parts.push(core); }
+      if(step.status && step.status !== core){ parts.push(String(step.status)); }
+      if(step.detail){ parts.push(step.detail); }
+      if(parts.length === 0 && typeof step.completed === "number" && typeof step.total === "number"){
+        parts.push(`${step.completed}/${step.total}`);
+      }
+      if(parts.length === 0 && step.message == null){
+        try{
+          parts.push(JSON.stringify(step));
+        }catch(err){
+          parts.push(String(step));
+        }
+      }
+      text = parts.join(" — ");
+    }
+    if(!text){
+      text = String(step);
+    }
+    const tone = String(level || "").toLowerCase();
+    let toneClass = "text-slate-700";
+    if(tone.includes("error")){
+      toneClass = "text-rose-600";
+    }else if(tone.includes("warn")){
+      toneClass = "text-amber-600";
+    }
+    return React.createElement("li",{key:`step-${key}-${index}`,className:`text-sm ${toneClass}`},text);
+  };
+
+  return (
+    React.createElement("div",{className:"mb-4 rounded-xl border border-indigo-200 bg-white p-4 shadow-soft"},
+      React.createElement("div",{className:"flex flex-col gap-2 md:flex-row md:items-center md:justify-between"},
+        React.createElement("div",{className:"space-y-1"},
+          React.createElement("p",{className:"text-sm font-medium text-indigo-900"},`Processamento em andamento (job ${jobId})`),
+          React.createElement("p",{className:"text-xs uppercase tracking-wide text-indigo-600"},`Status: ${(status.status || "").replace(/_/g," ")}`)
+        ),
+        React.createElement("div",{className:"flex items-center gap-2"},
+          logUrl && React.createElement("a",{href:logUrl,target:"_blank",rel:"noopener",className:"text-sm font-medium text-indigo-600 hover:text-indigo-500"},"Baixar logs"),
+          React.createElement("button",{
+            onClick:onCancel,
+            disabled:disableCancel || canceling,
+            className:"rounded-lg border border-indigo-500 px-3 py-1 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400"
+          }, cancelRequested ? "Cancelamento solicitado" : (canceling ? "Cancelando..." : "Cancelar"))
+        )
+      ),
+      percentValue !== null && React.createElement("div",{className:"mt-4"},
+        React.createElement("div",{className:"mb-1 flex justify-between text-xs text-slate-500"},
+          React.createElement("span",null,"Progresso"),
+          React.createElement("span",null,
+            percentText,
+            completed !== null && total !== null ? ` · ${completed}/${total}` : ""
+          )
+        ),
+        React.createElement("div",{className:"h-2 w-full overflow-hidden rounded-full bg-slate-200"},
+          React.createElement("div",{className:"h-full bg-indigo-500 transition-all",style:{width:`${percentValue}%`}}
+          )
+        )
+      ),
+      currentMessage && React.createElement("p",{className:"mt-4 text-sm text-slate-600"}, currentMessage),
+      steps.length ? React.createElement("div",{className:"mt-4 max-h-48 overflow-y-auto rounded-lg bg-slate-50 p-3"},
+        React.createElement("ol",{className:"space-y-1"}, steps.slice(-12).map(renderStep).filter(Boolean))
+      ) : null,
+      status.log_size ? React.createElement("p",{className:"mt-3 text-xs text-slate-400"}, `Log: ${(status.log_size/1024).toFixed(1)} KB`) : null,
+      cancelRequested ? React.createElement("p",{className:"mt-3 text-xs text-amber-600"},"Cancelamento em andamento — aguarde a finalização.") : null
+    )
+  );
+}
 
 function Badge({status}){
   const m = STATUS_COLORS[status] || STATUS_COLORS["SEM_FONTE"];
@@ -422,7 +548,9 @@ function App(){
   const [uploadError,setUploadError] = useState(null);
   const [currentJobId,setCurrentJobId] = useState(null);
   const [jobStatus,setJobStatus] = useState(null);
-  const jobRunning = Boolean(currentJobId) && ["running","queued","pending","processing","in_progress"].includes(String(jobStatus||"").toLowerCase());
+  const [jobCanceling,setJobCanceling] = useState(false);
+  const normalizedJobStatus = String(jobStatus?.status || "").toLowerCase();
+  const jobRunning = Boolean(currentJobId) && JOB_ACTIVE_STATES.has(normalizedJobStatus);
 
   const resolveRowId = useCallback((entry)=> entry?.id ?? [entry?.sucessor_idx, entry?.fonte_tipo, entry?.fonte_idx].filter(Boolean).join('-'), []);
 
@@ -498,6 +626,28 @@ function App(){
     }catch(e){ alert("Falha no export PDF: "+e); }
   };
 
+  const handleCancelJob = useCallback(async ()=>{
+    if(!currentJobId || jobCanceling){
+      return;
+    }
+    setJobCanceling(true);
+    try{
+      const res = await api.del(`/api/process/${currentJobId}`);
+      setJobStatus(prev=>{
+        if(prev && typeof prev === "object"){
+          return {...prev, ...res};
+        }
+        return res;
+      });
+    }catch(err){
+      console.error("Falha ao solicitar cancelamento do job", err);
+      const message = err && err.message ? err.message : String(err);
+      alert("Não foi possível cancelar o processamento: " + message);
+    }finally{
+      setJobCanceling(false);
+    }
+  },[api,currentJobId,jobCanceling]);
+
   const openUploadModal = ()=>{
     setUploadError(null);
     setShowUploadModal(true);
@@ -525,7 +675,8 @@ function App(){
           return;
         }
         setCurrentJobId(jobId);
-        setJobStatus(initialStatus);
+        setJobCanceling(false);
+        setJobStatus({job_id: jobId, status: initialStatus});
         if(String(initialStatus||"").toLowerCase() === "success"){
           await loadMeta();
           await loadGrid();
@@ -646,8 +797,8 @@ function App(){
         if(cancelled){
           return;
         }
+        setJobStatus(res);
         const status = res?.status || null;
-        setJobStatus(status);
         const normalized = String(status||"").toLowerCase();
         if(normalized === "success"){
           await Promise.all([loadMeta(), loadGrid()]);
@@ -657,9 +808,29 @@ function App(){
           if(timerId){ clearInterval(timerId); timerId = null; }
           setCurrentJobId(null);
           setJobStatus(null);
+          setJobCanceling(false);
         }else if(normalized === "failed" || normalized === "error"){
           if(timerId){ clearInterval(timerId); timerId = null; }
           setCurrentJobId(null);
+          setJobStatus(null);
+          setJobCanceling(false);
+          if(!cancelled){
+            const lastLog = Array.isArray(res?.logs) && res.logs.length ? res.logs[res.logs.length-1] : null;
+            const message = res?.message || lastLog?.message || lastLog?.label;
+            if(message){
+              alert(`Processamento falhou: ${message}`);
+            }else{
+              alert("Processamento falhou.");
+            }
+          }
+        }else if(normalized === "cancelled"){
+          if(timerId){ clearInterval(timerId); timerId = null; }
+          setCurrentJobId(null);
+          setJobStatus(null);
+          setJobCanceling(false);
+          if(!cancelled){
+            alert("Processamento cancelado.");
+          }
         }
       }catch(pollErr){
         console.error("Falha no polling do processamento", pollErr);
@@ -691,9 +862,13 @@ function App(){
           }, (uploading || jobRunning)?"Processando...":"Processar")
         )
       ),
-      jobRunning && React.createElement("div",{className:"mb-3 rounded-lg bg-indigo-50 px-4 py-3 text-sm text-indigo-800"},
-        `Processamento em andamento (job ${currentJobId}) — status: ${jobStatus || "..."}`
-      ),
+      currentJobId && jobStatus ? React.createElement(JobProgressPanel,{
+        jobId: currentJobId,
+        status: jobStatus,
+        apiBase: DEFAULT_API_BASE,
+        onCancel: handleCancelJob,
+        canceling: jobCanceling
+      }) : null,
       React.createElement(Toolbar,{
         stats: toolbarStats ?? computeToolbarStats(meta),
         filters,setFilters,
