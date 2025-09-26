@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 try:
@@ -86,12 +86,20 @@ def _relative_download(path: Path) -> Optional[str]:
     return f"/files/{rel.as_posix()}"
 
 
-@app.get("/", response_class=HTMLResponse)
-def index() -> HTMLResponse:
+def _ui_app_html() -> str:
     if not UI_APP_PATH.exists():
         raise HTTPException(500, detail=f"ui_app.html not found at {UI_APP_PATH}")
-    html = UI_APP_PATH.read_text(encoding="utf-8")
-    return HTMLResponse(html)
+    return UI_APP_PATH.read_text(encoding="utf-8")
+
+
+@app.get("/", response_class=HTMLResponse)
+def index() -> HTMLResponse:
+    return HTMLResponse(_ui_app_html())
+
+
+@app.get("/app", response_class=HTMLResponse)
+def ui_app() -> HTMLResponse:
+    return HTMLResponse(_ui_app_html())
 
 
 @app.get("/api/health")
