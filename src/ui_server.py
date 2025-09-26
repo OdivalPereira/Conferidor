@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -7,13 +8,14 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 try:
     from export_xlsx import run as run_export_xlsx  # type: ignore
@@ -25,14 +27,32 @@ try:
 except Exception:  # pragma: no cover
     run_export_pdf = None
 
+try:
+    from run_pipeline import main as run_pipeline_main  # type: ignore
+except Exception:  # pragma: no cover
+    run_pipeline_main = None
+
 APP_TITLE = "Conferidor UI"
 DATA_DIR = Path(os.environ.get("DATA_DIR", "out")).expanduser().resolve()
 UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR", "dados")).expanduser().resolve()
 SCHEMA_PATH = Path(os.environ.get("UI_SCHEMA", "cfg/ui_schema.json")).expanduser().resolve()
+CFG_DIR = Path(os.environ.get("CFG_DIR", "cfg")).expanduser().resolve()
 UI_APP_PATH = Path(__file__).resolve().parent / "ui_app.html"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+JOBS_DIR = DATA_DIR / "jobs"
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
+
+JOB_TASKS: Dict[str, asyncio.Task[Any]] = {}
+
+
+class ProcessPayload(BaseModel):
+    job_id: str
+    dados_dir: Optional[str] = None
+    cfg_dir: Optional[str] = None
+    out_dir: Optional[str] = None
+    pipeline_params: Dict[str, Any] = Field(default_factory=dict)
 
 app = FastAPI(title=APP_TITLE)
 app.add_middleware(
@@ -113,6 +133,162 @@ def _ensure_csv(filename: Optional[str]) -> None:
 
 def _now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _job_dir(job_id: str) -> Path:
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    return job_dir
+
+
+def _job_status_path(job_id: str) -> Path:
+    return _job_dir(job_id) / "status.json"
+
+
+def _resolve_user_path(value: Optional[str], default: Path) -> Path:
+    if not value:
+        return default
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = (Path.cwd() / candidate).resolve()
+    else:
+        candidate = candidate.resolve()
+    return candidate
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    return str(value)
+
+
+def _load_job_status(job_id: str) -> Optional[Dict[str, Any]]:
+    status_path = _job_status_path(job_id)
+    if not status_path.exists():
+        return None
+    try:
+        return json.loads(status_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def _write_job_status(job_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    status_path = _job_status_path(job_id)
+    status_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return data
+
+
+def _append_job_log(data: Dict[str, Any], message: str, level: str = "info") -> None:
+    logs = data.setdefault("logs", [])
+    logs.append({"timestamp": _now_iso(), "level": level, "message": message})
+
+
+def _update_job_status(
+    job_id: str,
+    *,
+    status: Optional[str] = None,
+    message: Optional[str] = None,
+    level: str = "info",
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    data = _load_job_status(job_id) or {
+        "job_id": job_id,
+        "created_at": _now_iso(),
+        "logs": [],
+    }
+    now = _now_iso()
+    data["updated_at"] = now
+    if status:
+        data["status"] = status
+        if status in {"success", "error"}:
+            data["finished_at"] = now
+    if extra:
+        for key, value in extra.items():
+            data[str(key)] = _json_safe(value)
+    if message:
+        _append_job_log(data, message, level=level)
+    return _write_job_status(job_id, data)
+
+
+def _build_pipeline_argv(
+    dados_dir: Path,
+    out_dir: Path,
+    cfg_dir: Path,
+    params: Dict[str, Any],
+) -> List[str]:
+    argv: List[str] = [
+        "--dados-dir",
+        str(dados_dir),
+        "--out-dir",
+        str(out_dir),
+        "--cfg-dir",
+        str(cfg_dir),
+    ]
+
+    for key, value in params.items():
+        flag = f"--{str(key).replace('_', '-')}"
+        if isinstance(value, bool):
+            if value:
+                argv.append(flag)
+            continue
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            if not value:
+                continue
+            argv.append(flag)
+            argv.extend(str(item) for item in value)
+            continue
+        argv.extend([flag, str(value)])
+
+    return argv
+
+
+def _invoke_pipeline(argv: List[str]) -> int:
+    if run_pipeline_main is None:
+        raise RuntimeError("run_pipeline.main is not available in this runtime")
+    try:
+        return run_pipeline_main(argv)
+    except SystemExit as exc:  # pragma: no cover - defensive
+        code = exc.code if isinstance(exc.code, int) else 1
+        return int(code)
+
+
+async def _pipeline_worker(job_id: str, argv: List[str]) -> None:
+    try:
+        _update_job_status(job_id, status="running", message="Pipeline execution started")
+        exit_code = await asyncio.to_thread(_invoke_pipeline, argv)
+        if exit_code == 0:
+            _update_job_status(job_id, status="success", message="Pipeline completed successfully", extra={"exit_code": 0})
+        else:
+            _update_job_status(
+                job_id,
+                status="error",
+                message=f"Pipeline exited with code {exit_code}",
+                level="error",
+                extra={"exit_code": exit_code},
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        _update_job_status(
+            job_id,
+            status="error",
+            message=f"Unhandled error during pipeline execution: {exc}",
+            level="error",
+            extra={"error": str(exc)},
+        )
+    finally:
+        JOB_TASKS.pop(job_id, None)
+
+
+async def _monitor_task(task: asyncio.Task[Any]) -> None:
+    try:
+        await task
+    except Exception:  # pragma: no cover - defensive
+        pass
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -274,6 +450,78 @@ def api_uploads(
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return {"job_id": job_id, "file_count": len(manifest_files)}
+
+
+@app.get("/api/jobs/{job_id}")
+def api_job_status(job_id: str) -> Dict[str, Any]:
+    status = _load_job_status(job_id)
+    if not status:
+        raise HTTPException(404, detail=f"Job '{job_id}' not found")
+    return status
+
+
+@app.post("/api/process")
+async def api_process(
+    payload: ProcessPayload,
+    background_tasks: BackgroundTasks,
+) -> JSONResponse:
+    job_id = payload.job_id.strip()
+    if not job_id:
+        raise HTTPException(400, detail="job_id is required")
+
+    uploads_dir = UPLOADS_DIR / job_id
+    if not uploads_dir.exists() or not uploads_dir.is_dir():
+        raise HTTPException(404, detail=f"Upload job '{job_id}' not found")
+
+    existing = _load_job_status(job_id)
+    if existing and existing.get("status") in {"queued", "running"}:
+        raise HTTPException(409, detail=f"Job '{job_id}' is already in progress")
+
+    dados_dir = _resolve_user_path(payload.dados_dir, uploads_dir)
+    if not dados_dir.exists():
+        raise HTTPException(400, detail=f"dados_dir not found: {dados_dir}")
+
+    cfg_dir = _resolve_user_path(payload.cfg_dir, CFG_DIR)
+    if not cfg_dir.exists():
+        raise HTTPException(400, detail=f"cfg_dir not found: {cfg_dir}")
+
+    out_dir = _resolve_user_path(payload.out_dir, DATA_DIR / job_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    _job_dir(job_id)
+
+    params = {str(key): value for key, value in payload.pipeline_params.items()}
+    argv = _build_pipeline_argv(dados_dir, out_dir, cfg_dir, params)
+
+    initial_status = {
+        "job_id": job_id,
+        "status": "queued",
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+        "dados_dir": str(dados_dir),
+        "cfg_dir": str(cfg_dir),
+        "out_dir": str(out_dir),
+        "params": _json_safe(params),
+        "argv": list(argv),
+        "logs": [],
+    }
+    _append_job_log(initial_status, "Job queued")
+    _write_job_status(job_id, initial_status)
+
+    task = asyncio.create_task(_pipeline_worker(job_id, argv))
+    JOB_TASKS[job_id] = task
+    background_tasks.add_task(_monitor_task, task)
+
+    response = JSONResponse(
+        status_code=202,
+        content={
+            "job_id": job_id,
+            "status": "queued",
+            "status_url": f"/api/jobs/{job_id}",
+        },
+    )
+    response.headers["Location"] = f"/api/jobs/{job_id}"
+    return response
 
 
 @app.post("/api/export/xlsx")
