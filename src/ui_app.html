@@ -63,6 +63,22 @@ const STATUS_KEY = {
   SEM_SUCESSOR: 'sem_sucessor'
 };
 
+const DEFAULT_COLUMNS = [
+  {id:"strategy",label:"Regra",type:"text"},
+  {id:"score",label:"Score",type:"number"},
+  {id:"S.data",label:"Data (S)",type:"date"},
+  {id:"S.debito",label:"Debito",type:"text"},
+  {id:"S.credito",label:"Credito",type:"text"},
+  {id:"S.doc",label:"No Docto (S)",type:"text"},
+  {id:"S.valor",label:"Valor (S)",type:"money"},
+  {id:"F.doc",label:"No Docto (F)",type:"text"},
+  {id:"F.valor",label:"Valor (F)",type:"money"},
+  {id:"F.cfop",label:"CFOP",type:"text"},
+  {id:"delta.valor",label:"Delta Valor",type:"money"},
+  {id:"delta.dias",label:"Delta Dias",type:"number"},
+  {id:"motivos",label:"Motivos",type:"text"}
+];
+
 function Badge({status}){
   const m = STATUS_COLORS[status] || STATUS_COLORS["SEM_FONTE"];
   return React.createElement("span",{className:"badge",style:{background:m.badge,color:m.text}},status||"—");
@@ -300,21 +316,7 @@ function App(){
 
   const selectedRowId = selectedRow ? resolveRowId(selectedRow) : null;
 
-  const columns = useMemo(()=> (schema?.columns || [
-    {id:"strategy",label:"Regra",type:"text"},
-    {id:"score",label:"Score",type:"number"},
-    {id:"S.data",label:"Data (S)",type:"date"},
-    {id:"S.debito",label:"Debito",type:"text"},
-    {id:"S.credito",label:"Credito",type:"text"},
-    {id:"S.doc",label:"No Docto (S)",type:"text"},
-    {id:"S.valor",label:"Valor (S)",type:"money"},
-    {id:"F.doc",label:"No Docto (F)",type:"text"},
-    {id:"F.valor",label:"Valor (F)",type:"money"},
-    {id:"F.cfop",label:"CFOP",type:"text"},
-    {id:"delta.valor",label:"Delta Valor",type:"money"},
-    {id:"delta.dias",label:"Delta Dias",type:"number"},
-    {id:"motivos",label:"Motivos",type:"text"}
-  ]), [schema]);
+  const tableColumns = useMemo(() => schema?.columns?.length ? schema.columns : DEFAULT_COLUMNS, [schema]);
 
   const loadMeta = useCallback(async ()=>{
     try{
@@ -449,7 +451,7 @@ function App(){
       }),
       error && React.createElement("div",{className:"p-3 rounded bg-rose-100 text-rose-800 mb-3"}, String(error)),
       React.createElement(Table,{
-        columns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect: handleInspect,onManualStatus: handleManualStatus,onResetStatus: handleResetStatus
+        columns: tableColumns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect: handleInspect,onManualStatus: handleManualStatus,onResetStatus: handleResetStatus
       }),
       React.createElement(InspectorPanel,{
         row: selectedRow,
