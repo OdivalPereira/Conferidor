@@ -332,6 +332,19 @@ function App(){
   useEffect(()=>{ loadMeta(); },[loadMeta]);
   useEffect(()=>{ loadGrid(); },[loadGrid]);
 
+  const toolbarStats = useMemo(()=>{
+    if(!meta || !meta.stats){
+      return null;
+    }
+    const base = meta.stats;
+    const uppercase = Object.entries(STATUS_KEY).reduce((acc,[upper,lower])=>{
+      acc[upper] = base[lower] ?? 0;
+      return acc;
+    },{});
+    const total = (base.ok||0)+(base.alerta||0)+(base.divergencia||0)+(base.sem_fonte||0)+(base.sem_sucessor||0);
+    return {...base, ...uppercase, TOTAL: total};
+  },[meta]);
+
   const exportX = async ()=>{
     try{
       const out = "relatorio_conferencia.xlsx";
@@ -423,7 +436,7 @@ function App(){
         React.createElement("p",{className:"text-slate-600"},"Carrega ", React.createElement("code",null,"ui_grid.jsonl"), " do servidor local e exibe a grade com filtros e exports.")
       ),
       React.createElement(Toolbar,{
-        stats: (meta && meta.stats) ? {...meta.stats, TOTAL:(meta.stats.ok||0)+(meta.stats.alerta||0)+(meta.stats.divergencia||0)+(meta.stats.sem_fonte||0)+(meta.stats.sem_sucessor||0)} : null,
+        stats: toolbarStats,
         filters,setFilters,
         onReload:()=>{ setOffset(0); loadGrid(); },
         onExportX: exportX,
