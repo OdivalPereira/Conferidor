@@ -45,6 +45,20 @@ def safe_upper(text: Optional[str]) -> Optional[str]:
     return value.upper() if value else None
 
 
+def participant_key(*texts: Optional[str]) -> Optional[str]:
+    values = []
+    for text in texts:
+        normalized = normalise_space(text)
+        if normalized:
+            values.append(normalized)
+    if not values:
+        return None
+    combined = normalise_space(" ".join(values))
+    if not combined:
+        return None
+    return safe_upper(strip_accents(combined))
+
+
 def abs_or_none(value: Optional[float]) -> Optional[float]:
     return abs(value) if value is not None else None
 
@@ -214,7 +228,10 @@ class DatasetNormaliser:
             return normalise_space(text)
 
         df["participante_combined"] = parts.apply(_combine_parts, axis=1)
-        df["participante_key"] = df["participante_combined"].map(lambda x: safe_upper(strip_accents(x)))
+        df["participante_key"] = parts.apply(
+            lambda row: participant_key(row.get("part_d"), row.get("part_c")),
+            axis=1,
+        )
 
         valor_raw = column(df, "valor")
         df["valor"] = valor_raw.map(lambda v: parse_decimal(v))
@@ -285,7 +302,7 @@ class DatasetNormaliser:
 
         participante_raw = column(df, "participante")
         df["participante"] = participante_raw.map(normalise_space)
-        df["participante_key"] = df["participante"].map(lambda x: safe_upper(strip_accents(x)))
+        df["participante_key"] = df["participante"].map(participant_key)
 
         valor_raw = column(df, "valor")
         df["valor"] = valor_raw.map(lambda v: parse_decimal(v))

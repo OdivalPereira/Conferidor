@@ -41,6 +41,34 @@ def test_normalise_sucessor_builds_tokens():
     assert "NFE_NUM_SERIE:12345" in tokens
 
 
+def test_normalise_participante_key_generation():
+    config = NormalizerConfig.load(CFG_PATH, TOKENS_PATH)
+    normaliser = DatasetNormaliser(config)
+
+    sucessor_df = pd.DataFrame(
+        {
+            "data": ["01/08/2025"],
+            "doc": ["NF 999"],
+            "valor": ["500,00"],
+            "part_d": ["Fornecedor ÁBC"],
+            "part_c": ["Banco Éxito"],
+        }
+    )
+    sucessor_result = normaliser.normalise_sucessor(sucessor_df)
+    assert sucessor_result.loc[0, "participante_key"] == "FORNECEDOR ABC BANCO EXITO"
+
+    fonte_df = pd.DataFrame(
+        {
+            "data": ["01/08/2025"],
+            "doc": ["123"],
+            "valor": ["500,00"],
+            "participante": ["Fornecedor ÁBC"],
+        }
+    )
+    fonte_result = normaliser.normalise_fonte(fonte_df, "ENTRADA")
+    assert fonte_result.loc[0, "participante_key"] == "FORNECEDOR ABC"
+
+
 def test_parse_date_multiple_formats():
     config = NormalizerConfig.load(CFG_PATH, TOKENS_PATH)
     formats = config.date_formats
