@@ -45,6 +45,7 @@ UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR", "dados")).expanduser().resolve(
 SCHEMA_PATH = Path(os.environ.get("UI_SCHEMA", "cfg/ui_schema.json")).expanduser().resolve()
 CFG_DIR = Path(os.environ.get("CFG_DIR", "cfg")).expanduser().resolve()
 UI_APP_PATH = Path(__file__).resolve().parent / "ui_app.html"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 MANUAL_OVERRIDES_PATH = DATA_DIR / "manual_overrides.jsonl"
 MANUAL_OVERRIDE_TAG = "ajuste_manual"
 
@@ -105,6 +106,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/files", StaticFiles(directory=str(DATA_DIR)), name="files")
 
 
