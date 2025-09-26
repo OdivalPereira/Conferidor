@@ -6,14 +6,15 @@ import json
 import os
 import shutil
 import tempfile
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -28,9 +29,15 @@ except Exception:  # pragma: no cover
     run_export_pdf = None
 
 try:
-    from run_pipeline import main as run_pipeline_main  # type: ignore
+    from run_pipeline import (  # type: ignore
+        PipelineCancelled as RunPipelineCancelled,
+        main as run_pipeline_main,
+        set_cancel_check as run_pipeline_set_cancel_check,
+    )
 except Exception:  # pragma: no cover
     run_pipeline_main = None
+    RunPipelineCancelled = None
+    run_pipeline_set_cancel_check = None
 
 APP_TITLE = "Conferidor UI"
 DATA_DIR = Path(os.environ.get("DATA_DIR", "out")).expanduser().resolve()
@@ -45,6 +52,7 @@ JOBS_DIR = DATA_DIR / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
 JOB_TASKS: Dict[str, asyncio.Task[Any]] = {}
+JOB_CANCEL_EVENTS: Dict[str, asyncio.Event] = {}
 
 
 class ProcessPayload(BaseModel):
@@ -145,6 +153,19 @@ def _job_status_path(job_id: str) -> Path:
     return _job_dir(job_id) / "status.json"
 
 
+def _job_log_path(job_id: str) -> Path:
+    return _job_dir(job_id) / "pipeline.log"
+
+
+def _append_plain_log(log_path: Path, message: str) -> None:
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"[{_now_iso()}] {message}\n")
+    except Exception:  # pragma: no cover - best effort logging
+        pass
+
+
 def _resolve_user_path(value: Optional[str], default: Path) -> Path:
     if not value:
         return default
@@ -204,7 +225,7 @@ def _update_job_status(
     data["updated_at"] = now
     if status:
         data["status"] = status
-        if status in {"success", "error"}:
+        if status in {"success", "error", "cancelled"}:
             data["finished_at"] = now
     if extra:
         for key, value in extra.items():
@@ -212,6 +233,35 @@ def _update_job_status(
     if message:
         _append_job_log(data, message, level=level)
     return _write_job_status(job_id, data)
+
+
+def _job_status_payload(job_id: str) -> Dict[str, Any]:
+    status = _load_job_status(job_id)
+    if not status:
+        raise HTTPException(404, detail=f"Job '{job_id}' not found")
+
+    payload: Dict[str, Any] = json.loads(json.dumps(status))
+    payload.setdefault("job_id", job_id)
+
+    progress = payload.get("progress")
+    if isinstance(progress, dict):
+        percent = progress.get("percent")
+        completed = progress.get("completed")
+        total = progress.get("total")
+        if percent is None and isinstance(completed, (int, float)) and isinstance(total, (int, float)) and total:
+            try:
+                progress["percent"] = round((float(completed) / float(total)) * 100, 2)
+            except ZeroDivisionError:
+                progress["percent"] = 0.0
+
+    log_path = _job_log_path(job_id)
+    if log_path.exists():
+        payload["log_url"] = f"/api/process/{job_id}/logs"
+        payload["log_size"] = log_path.stat().st_size
+    else:
+        payload["log_url"] = None
+
+    return payload
 
 
 def _build_pipeline_argv(
@@ -258,13 +308,60 @@ def _invoke_pipeline(argv: List[str]) -> int:
         return int(code)
 
 
+def _run_pipeline_sync(job_id: str, argv: List[str], cancel_event: asyncio.Event) -> int:
+    if run_pipeline_main is None:
+        raise RuntimeError("run_pipeline.main is not available in this runtime")
+
+    log_path = _job_log_path(job_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def check_cancel() -> None:
+        if cancel_event.is_set():
+            if RunPipelineCancelled is not None:
+                raise RunPipelineCancelled()
+            raise RuntimeError("Pipeline cancelled")
+
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        if run_pipeline_set_cancel_check is not None and RunPipelineCancelled is not None:
+            run_pipeline_set_cancel_check(check_cancel)
+        try:
+            with redirect_stdout(log_file), redirect_stderr(log_file):
+                return _invoke_pipeline(argv)
+        finally:
+            if run_pipeline_set_cancel_check is not None:
+                run_pipeline_set_cancel_check(None)
+            log_file.flush()
+
+
 async def _pipeline_worker(job_id: str, argv: List[str]) -> None:
+    cancel_event = JOB_CANCEL_EVENTS.setdefault(job_id, asyncio.Event())
+    log_path = _job_log_path(job_id)
+
     try:
-        _update_job_status(job_id, status="running", message="Pipeline execution started")
-        exit_code = await asyncio.to_thread(_invoke_pipeline, argv)
+        if cancel_event.is_set():
+            _append_plain_log(log_path, "Job cancelled before start")
+            _update_job_status(
+                job_id,
+                status="cancelled",
+                message="Job cancelled before start",
+                level="warning",
+                extra={"cancelled": True},
+            )
+            return
+
+        _append_plain_log(log_path, "Pipeline execution started")
+        _update_job_status(
+            job_id,
+            status="running",
+            message="Pipeline execution started",
+            extra={"log_path": str(log_path)},
+        )
+        exit_code = await asyncio.to_thread(_run_pipeline_sync, job_id, argv, cancel_event)
         if exit_code == 0:
+            _append_plain_log(log_path, "Pipeline completed successfully")
             _update_job_status(job_id, status="success", message="Pipeline completed successfully", extra={"exit_code": 0})
         else:
+            _append_plain_log(log_path, f"Pipeline exited with code {exit_code}")
             _update_job_status(
                 job_id,
                 status="error",
@@ -272,7 +369,38 @@ async def _pipeline_worker(job_id: str, argv: List[str]) -> None:
                 level="error",
                 extra={"exit_code": exit_code},
             )
+    except asyncio.CancelledError:
+        _append_plain_log(log_path, "Pipeline task cancelled")
+        _update_job_status(
+            job_id,
+            status="cancelled",
+            message="Pipeline task cancelled",
+            level="warning",
+            extra={"cancelled": True},
+        )
+        raise
     except Exception as exc:  # pragma: no cover - defensive
+        if RunPipelineCancelled is not None and isinstance(exc, RunPipelineCancelled):
+            _append_plain_log(log_path, "Pipeline cancelled by user")
+            _update_job_status(
+                job_id,
+                status="cancelled",
+                message="Pipeline cancelled by user",
+                level="warning",
+                extra={"cancelled": True},
+            )
+            return
+        if isinstance(exc, RuntimeError) and str(exc) == "Pipeline cancelled":
+            _append_plain_log(log_path, "Pipeline cancelled by user")
+            _update_job_status(
+                job_id,
+                status="cancelled",
+                message="Pipeline cancelled by user",
+                level="warning",
+                extra={"cancelled": True},
+            )
+            return
+        _append_plain_log(log_path, f"Pipeline error: {exc}")
         _update_job_status(
             job_id,
             status="error",
@@ -282,6 +410,9 @@ async def _pipeline_worker(job_id: str, argv: List[str]) -> None:
         )
     finally:
         JOB_TASKS.pop(job_id, None)
+        cancel_event = JOB_CANCEL_EVENTS.pop(job_id, None)
+        if cancel_event is not None:
+            cancel_event.set()
 
 
 async def _monitor_task(task: asyncio.Task[Any]) -> None:
@@ -454,10 +585,83 @@ def api_uploads(
 
 @app.get("/api/jobs/{job_id}")
 def api_job_status(job_id: str) -> Dict[str, Any]:
+    return _job_status_payload(job_id)
+
+
+@app.get("/api/process/{job_id}")
+def api_process_status(job_id: str) -> Dict[str, Any]:
+    return _job_status_payload(job_id)
+
+
+@app.get("/api/process/{job_id}/logs")
+def api_process_logs(job_id: str, offset: int = Query(0, ge=0)) -> StreamingResponse:
+    log_path = _job_log_path(job_id)
+    if not log_path.exists():
+        raise HTTPException(404, detail=f"Logs for job '{job_id}' not found")
+
+    if not isinstance(offset, int):
+        offset = getattr(offset, "default", 0)  # Handles direct invocation outside FastAPI
+
+    try:
+        offset_value = max(int(offset), 0)
+    except (TypeError, ValueError):
+        offset_value = 0
+
+    size = log_path.stat().st_size
+    start = min(offset_value, size)
+
+    def iterator() -> Iterator[bytes]:
+        with log_path.open("rb") as handle:
+            if start:
+                handle.seek(start)
+            while True:
+                chunk = handle.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+
+    response = StreamingResponse(iterator(), media_type="text/plain; charset=utf-8")
+    response.headers["X-Log-Size"] = str(size)
+    response.headers["X-Log-Offset"] = str(start)
+    response.headers["X-Log-Path"] = str(log_path)
+    return response
+
+
+@app.delete("/api/process/{job_id}")
+async def api_process_cancel(job_id: str) -> JSONResponse:
     status = _load_job_status(job_id)
     if not status:
         raise HTTPException(404, detail=f"Job '{job_id}' not found")
-    return status
+
+    state = str(status.get("status") or "").lower()
+    if state in {"success", "error", "cancelled"}:
+        raise HTTPException(409, detail=f"Job '{job_id}' is already finished")
+
+    cancel_event = JOB_CANCEL_EVENTS.get(job_id)
+    if cancel_event is None:
+        cancel_event = JOB_CANCEL_EVENTS[job_id] = asyncio.Event()
+
+    already_requested = cancel_event.is_set()
+    cancel_event.set()
+
+    updated = _update_job_status(
+        job_id,
+        status="cancelling",
+        message="Cancellation requested" if not already_requested else "Cancellation already requested",
+        level="warning",
+        extra={"cancel_requested": True},
+    )
+
+    response = JSONResponse(
+        status_code=202,
+        content={
+            "job_id": job_id,
+            "status": updated.get("status"),
+            "cancel_requested": True,
+        },
+    )
+    response.headers["Location"] = f"/api/process/{job_id}"
+    return response
 
 
 @app.post("/api/process")

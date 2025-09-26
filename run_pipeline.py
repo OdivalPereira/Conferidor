@@ -5,7 +5,7 @@ import json
 import sys
 import unicodedata
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Optional, Set
+from typing import Callable, Dict, Iterable, List, Sequence, Optional, Set
 
 # Ensure src/ is importable
 ROOT_DIR = Path(__file__).resolve().parent
@@ -18,6 +18,30 @@ from normalizer import main as normalizer_main
 from matcher import main as matcher_main
 from issues_engine import main as issues_main
 from ui_dataset_builder import main as ui_dataset_main
+
+
+class PipelineCancelled(Exception):
+    """Signal that the pipeline should abort due to an external request."""
+
+
+_CANCEL_CHECK: Optional[Callable[[], None]] = None
+
+
+def set_cancel_check(callback: Optional[Callable[[], None]]) -> None:
+    """Register a callable that raises :class:`PipelineCancelled` when triggered.
+
+    The callable will be invoked before and after each pipeline step, allowing an
+    external controller (such as the FastAPI UI server) to signal cancellation
+    between steps without modifying the CLI surface of the pipeline runner.
+    """
+
+    global _CANCEL_CHECK
+    _CANCEL_CHECK = callback
+
+
+def _ensure_not_cancelled() -> None:
+    if _CANCEL_CHECK is not None:
+        _CANCEL_CHECK()
 
 DEFAULT_INPUT_FILENAMES: Dict[str, str] = {
     "sucessor": "sucessor.csv",
@@ -187,12 +211,14 @@ def ensure_dir(path: Path) -> None:
 
 
 def call_step(name: str, func, args: Iterable[str]) -> None:
+    _ensure_not_cancelled()
     sys.stdout.write(f"[pipeline] Running {name}...\n")
     exit_code = func(list(args))
     if exit_code != 0:
         sys.stderr.write(f"[pipeline] Step '{name}' failed with exit code {exit_code}.\n")
         sys.exit(exit_code)
     sys.stdout.write(f"[pipeline] Step '{name}' completed.\n")
+    _ensure_not_cancelled()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -231,89 +257,93 @@ def main(argv: Sequence[str] | None = None) -> int:
     ensure_dir(normalized_dir)
     ensure_dir(match_dir)
 
-    loader_args: List[str] = [
-        "--inputs",
-        *[str(path) for path in (
-            input_paths["sucessor"],
-            input_paths["entradas"],
-            input_paths["saidas"],
-            input_paths["servicos"],
-            input_paths["fornecedores"],
-            input_paths["plano"],
-        )],
-        "--profiles",
-        str(profiles_path),
-        "--staging",
-        str(staging_dir),
-        "--log",
-        str(log_dir / "loader.jsonl"),
-    ]
-    call_step("loader", loader_main, loader_args)
-
-    normalizer_args: List[str] = [
-        "--staging",
-        str(staging_dir),
-        "--out",
-        str(normalized_dir),
-        "--profiles",
-        str(profiles_path),
-        "--tokens",
-        str(tokens_path),
-        "--log",
-        str(log_dir / "normalizer.jsonl"),
-    ]
-    call_step("normalizer", normalizer_main, normalizer_args)
-
-    matcher_args: List[str] = [
-        "--sucessor",
-        str(choose_normalized_table(normalized_dir, "sucessor")),
-        "--entradas",
-        str(choose_normalized_table(normalized_dir, "entradas")),
-        "--saidas",
-        str(choose_normalized_table(normalized_dir, "saidas")),
-        "--servicos",
-        str(choose_normalized_table(normalized_dir, "servicos")),
-        "--cfg-pesos",
-        str(matching_path),
-        "--cfg-tokens",
-        str(tokens_path),
-        "--cfop-map",
-        str(cfop_path),
-        "--out",
-        str(match_dir),
-        "--log",
-        str(match_dir / "match_log.jsonl"),
-    ]
-    call_step("matcher", matcher_main, matcher_args)
-
-    issues_args: List[str] = [
-        "--grid",
-        str(match_dir / "reconc_grid.csv"),
-        "--rules",
-        str(issues_rules_path),
-        "--out-issues",
-        str(match_dir / "issues.jsonl"),
-        "--out-grid",
-        str(match_dir / "reconc_grid_issues.csv"),
-    ]
-    call_step("issues_engine", issues_main, issues_args)
-
-    if not args.skip_ui:
-        ui_args: List[str] = [
-            "--grid",
-            str(match_dir / "reconc_grid_issues.csv"),
-            "--sem-fonte",
-            str(match_dir / "reconc_sem_fonte.csv"),
-            "--sem-sucessor",
-            str(match_dir / "reconc_sem_sucessor.csv"),
-            "--out-jsonl",
-            str(out_dir / "ui_grid.jsonl"),
-            "--meta",
-            str(out_dir / "ui_meta.json"),
-            "--schema",
-            str(schema_path),
+    try:
+        loader_args: List[str] = [
+            "--inputs",
+            *[str(path) for path in (
+                input_paths["sucessor"],
+                input_paths["entradas"],
+                input_paths["saidas"],
+                input_paths["servicos"],
+                input_paths["fornecedores"],
+                input_paths["plano"],
+            )],
+            "--profiles",
+            str(profiles_path),
+            "--staging",
+            str(staging_dir),
+            "--log",
+            str(log_dir / "loader.jsonl"),
         ]
-        call_step("ui_dataset_builder", ui_dataset_main, ui_args)
+        call_step("loader", loader_main, loader_args)
+
+        normalizer_args: List[str] = [
+            "--staging",
+            str(staging_dir),
+            "--out",
+            str(normalized_dir),
+            "--profiles",
+            str(profiles_path),
+            "--tokens",
+            str(tokens_path),
+            "--log",
+            str(log_dir / "normalizer.jsonl"),
+        ]
+        call_step("normalizer", normalizer_main, normalizer_args)
+
+        matcher_args: List[str] = [
+            "--sucessor",
+            str(choose_normalized_table(normalized_dir, "sucessor")),
+            "--entradas",
+            str(choose_normalized_table(normalized_dir, "entradas")),
+            "--saidas",
+            str(choose_normalized_table(normalized_dir, "saidas")),
+            "--servicos",
+            str(choose_normalized_table(normalized_dir, "servicos")),
+            "--cfg-pesos",
+            str(matching_path),
+            "--cfg-tokens",
+            str(tokens_path),
+            "--cfop-map",
+            str(cfop_path),
+            "--out",
+            str(match_dir),
+            "--log",
+            str(match_dir / "match_log.jsonl"),
+        ]
+        call_step("matcher", matcher_main, matcher_args)
+
+        issues_args: List[str] = [
+            "--grid",
+            str(match_dir / "reconc_grid.csv"),
+            "--rules",
+            str(issues_rules_path),
+            "--out-issues",
+            str(match_dir / "issues.jsonl"),
+            "--out-grid",
+            str(match_dir / "reconc_grid_issues.csv"),
+        ]
+        call_step("issues_engine", issues_main, issues_args)
+
+        if not args.skip_ui:
+            ui_args: List[str] = [
+                "--grid",
+                str(match_dir / "reconc_grid_issues.csv"),
+                "--sem-fonte",
+                str(match_dir / "reconc_sem_fonte.csv"),
+                "--sem-sucessor",
+                str(match_dir / "reconc_sem_sucessor.csv"),
+                "--out-jsonl",
+                str(out_dir / "ui_grid.jsonl"),
+                "--meta",
+                str(out_dir / "ui_meta.json"),
+                "--schema",
+                str(schema_path),
+            ]
+            call_step("ui_dataset_builder", ui_dataset_main, ui_args)
+    except PipelineCancelled:
+        sys.stderr.write("[pipeline] Execution cancelled before completion.\n")
+        return 3
 
     sys.stdout.write("[pipeline] All steps completed successfully.\n")
     return 0
