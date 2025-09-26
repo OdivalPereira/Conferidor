@@ -168,7 +168,10 @@ def api_grid(
 
     if sort_by:
         reverse = sort_dir.lower() != "asc"
-        filtered.sort(key=lambda item: item.get(sort_by), reverse=reverse)
+        filtered.sort(
+            key=lambda item: (item.get(sort_by) is None, item.get(sort_by)),
+            reverse=reverse,
+        )
 
     paginated = filtered[offset : offset + limit]
     return {
