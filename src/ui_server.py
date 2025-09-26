@@ -45,6 +45,8 @@ UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR", "dados")).expanduser().resolve(
 SCHEMA_PATH = Path(os.environ.get("UI_SCHEMA", "cfg/ui_schema.json")).expanduser().resolve()
 CFG_DIR = Path(os.environ.get("CFG_DIR", "cfg")).expanduser().resolve()
 UI_APP_PATH = Path(__file__).resolve().parent / "ui_app.html"
+MANUAL_OVERRIDES_PATH = DATA_DIR / "manual_overrides.jsonl"
+MANUAL_OVERRIDE_TAG = "ajuste_manual"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -89,6 +91,12 @@ class ProcessPayload(BaseModel):
     out_dir: Optional[str] = None
     pipeline_params: Dict[str, Any] = Field(default_factory=dict)
 
+
+class ManualStatusPayload(BaseModel):
+    row_id: str
+    status: str
+    original_status: Optional[str] = None
+
 app = FastAPI(title=APP_TITLE)
 app.add_middleware(
     CORSMiddleware,
@@ -120,6 +128,146 @@ def _read_jsonl(path: Path) -> List[Dict[str, object]]:
             except json.JSONDecodeError:
                 continue
     return rows
+
+
+def _append_manual_override_record(record: Dict[str, object]) -> None:
+    try:
+        MANUAL_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with MANUAL_OVERRIDES_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:  # pragma: no cover - best effort persistence
+        pass
+
+
+def _load_manual_overrides(path: Path = MANUAL_OVERRIDES_PATH) -> Dict[str, Dict[str, object]]:
+    overrides: Dict[str, Dict[str, object]] = {}
+    if not path.exists():
+        return overrides
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                row_id = str(data.get("row_id") or "").strip()
+                if not row_id:
+                    continue
+                status_value = data.get("status")
+                if status_value in (None, ""):
+                    overrides.pop(row_id, None)
+                    continue
+                normalized = dict(data)
+                normalized["row_id"] = row_id
+                normalized["status"] = str(status_value).upper()
+                original = normalized.get("original_status")
+                if original:
+                    normalized["original_status"] = str(original).upper()
+                else:
+                    normalized.pop("original_status", None)
+                overrides[row_id] = normalized
+    except Exception:  # pragma: no cover - defensive
+        return overrides
+    return overrides
+
+
+def _infer_row_id_from_row(row: Dict[str, object]) -> Optional[str]:
+    identifier = row.get("id")
+    if identifier not in (None, ""):
+        return str(identifier)
+    parts: List[str] = []
+    for key in ("sucessor_idx", "fonte_tipo", "fonte_idx"):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        parts.append(str(value))
+    if parts:
+        return "-".join(parts)
+    return None
+
+
+def _apply_manual_override_to_row(
+    row: Dict[str, object], override: Dict[str, object]
+) -> Dict[str, object]:
+    status_value = str(override.get("status") or "").upper()
+    if not status_value:
+        return row
+    updated = dict(row)
+    original_status = override.get("original_status")
+    if original_status:
+        updated["original_status"] = str(original_status).upper()
+    else:
+        previous = (
+            updated.get("original_status")
+            or updated.get("match.status")
+            or updated.get("status")
+            or ""
+        )
+        previous = str(previous).upper()
+        if previous:
+            updated["original_status"] = previous
+        else:
+            updated.pop("original_status", None)
+    updated["status"] = status_value
+    updated["match.status"] = status_value
+    motivos_raw = updated.get("motivos")
+    if motivos_raw is None and updated.get("match.motivos") is not None:
+        motivos_raw = updated.get("match.motivos")
+    motivos: List[str] = []
+    if motivos_raw:
+        motivos = [part for part in str(motivos_raw).split(";") if part]
+    if MANUAL_OVERRIDE_TAG not in motivos:
+        motivos.append(MANUAL_OVERRIDE_TAG)
+    updated["motivos"] = ";".join(motivos)
+    updated["_manual"] = True
+    return updated
+
+
+def _apply_manual_overrides(
+    rows: List[Dict[str, object]], overrides: Optional[Dict[str, Dict[str, object]]] = None
+) -> List[Dict[str, object]]:
+    if not rows:
+        return rows
+    overrides = overrides or _load_manual_overrides()
+    if not overrides:
+        cleaned: List[Dict[str, object]] = []
+        for row in rows:
+            cleaned_row = dict(row)
+            original_status = cleaned_row.get("original_status")
+            if original_status:
+                cleaned_row["status"] = str(original_status).upper()
+                cleaned_row["match.status"] = str(original_status).upper()
+            motivos_raw = cleaned_row.get("motivos") or cleaned_row.get("match.motivos")
+            if motivos_raw:
+                motivos = [part for part in str(motivos_raw).split(";") if part and part != MANUAL_OVERRIDE_TAG]
+                cleaned_row["motivos"] = ";".join(motivos)
+            cleaned_row.pop("_manual", None)
+            cleaned_row.pop("original_status", None)
+            cleaned.append(cleaned_row)
+        return cleaned
+    applied: List[Dict[str, object]] = []
+    for row in rows:
+        row_id = _infer_row_id_from_row(row)
+        override = overrides.get(row_id) if row_id else None
+        if override:
+            applied.append(_apply_manual_override_to_row(row, override))
+        else:
+            cleaned_row = dict(row)
+            original_status = cleaned_row.get("original_status")
+            if original_status:
+                cleaned_row["status"] = str(original_status).upper()
+                cleaned_row["match.status"] = str(original_status).upper()
+            motivos_raw = cleaned_row.get("motivos") or cleaned_row.get("match.motivos")
+            if motivos_raw:
+                motivos = [part for part in str(motivos_raw).split(";") if part and part != MANUAL_OVERRIDE_TAG]
+                cleaned_row["motivos"] = ";".join(motivos)
+            cleaned_row.pop("_manual", None)
+            cleaned_row.pop("original_status", None)
+            applied.append(cleaned_row)
+    return applied
 
 
 def _coerce_path(value: object | None) -> Optional[str]:
@@ -497,6 +645,7 @@ def api_grid(
 ) -> Dict[str, object]:
     grid_path = DATA_DIR / "ui_grid.jsonl"
     rows = _read_jsonl(grid_path)
+    rows = _apply_manual_overrides(rows)
 
     def row_match(row: Dict[str, object]) -> bool:
         if status and str(row.get("status") or "").upper() != status.upper():
@@ -532,6 +681,47 @@ def api_grid(
         "limit": limit,
         "items": paginated,
     }
+
+
+@app.post("/api/manual-status")
+def api_manual_status(payload: ManualStatusPayload) -> Dict[str, object]:
+    row_id = payload.row_id.strip()
+    if not row_id:
+        raise HTTPException(400, detail="row_id is required")
+    status_value = payload.status.strip().upper()
+    if not status_value:
+        raise HTTPException(400, detail="status is required")
+
+    overrides = _load_manual_overrides()
+    existing = overrides.get(row_id)
+    original = payload.original_status.strip().upper() if payload.original_status else None
+    if not original and existing:
+        original = existing.get("original_status")
+
+    record: Dict[str, object] = {
+        "row_id": row_id,
+        "status": status_value,
+        "updated_at": _now_iso(),
+    }
+    if original:
+        record["original_status"] = original
+
+    _append_manual_override_record(record)
+    overrides[row_id] = record
+    return {"ok": True, "override": record}
+
+
+@app.delete("/api/manual-status")
+def api_manual_status_delete(row_id: str = Query(..., description="Row identifier")) -> Dict[str, object]:
+    row_key = row_id.strip()
+    if not row_key:
+        raise HTTPException(400, detail="row_id is required")
+    overrides = _load_manual_overrides()
+    removed = row_key in overrides
+    record = {"row_id": row_key, "status": None, "updated_at": _now_iso()}
+    _append_manual_override_record(record)
+    overrides.pop(row_key, None)
+    return {"ok": True, "removed": removed}
 
 
 @app.get("/api/files")

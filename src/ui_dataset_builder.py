@@ -15,6 +15,8 @@ STATUS_COLOR = {
     "SEM_SUCESSOR": "#64748b",
 }
 
+MANUAL_OVERRIDE_TAG = "ajuste_manual"
+
 
 def read_csv(path: str) -> pd.DataFrame:
     if not path:
@@ -68,7 +70,73 @@ def build_base_row(row: pd.Series) -> Dict[str, object]:
     }
 
 
-def build_rows(grid_df: pd.DataFrame, sem_fonte_df: pd.DataFrame, sem_sucessor_df: pd.DataFrame) -> List[Dict[str, object]]:
+def load_manual_overrides(path: Path) -> Dict[str, Dict[str, object]]:
+    overrides: Dict[str, Dict[str, object]] = {}
+    if not path.exists():
+        return overrides
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                row_id = str(data.get("row_id") or "").strip()
+                if not row_id:
+                    continue
+                status = data.get("status")
+                if status in (None, ""):
+                    overrides.pop(row_id, None)
+                    continue
+                normalized = dict(data)
+                normalized["row_id"] = row_id
+                normalized["status"] = str(status).upper()
+                original = normalized.get("original_status")
+                if original:
+                    normalized["original_status"] = str(original).upper()
+                else:
+                    normalized.pop("original_status", None)
+                overrides[row_id] = normalized
+    except Exception:
+        return overrides
+    return overrides
+
+
+def apply_override(row: Dict[str, object], override: Dict[str, object]) -> Dict[str, object]:
+    status = str(override.get("status") or "").upper()
+    if not status:
+        return row
+    updated = dict(row)
+    original = override.get("original_status")
+    if original:
+        updated["original_status"] = str(original).upper()
+    else:
+        previous = str(row.get("original_status") or row.get("status") or "").upper()
+        if previous:
+            updated["original_status"] = previous
+        else:
+            updated.pop("original_status", None)
+    updated["status"] = status
+    updated["match.status"] = status
+    updated["color"] = STATUS_COLOR.get(status, updated.get("color"))
+    motivos = [part for part in str(updated.get("motivos") or "").split(";") if part]
+    if MANUAL_OVERRIDE_TAG not in motivos:
+        motivos.append(MANUAL_OVERRIDE_TAG)
+    updated["motivos"] = ";".join(motivos)
+    updated["_manual"] = True
+    return updated
+
+
+def build_rows(
+    grid_df: pd.DataFrame,
+    sem_fonte_df: pd.DataFrame,
+    sem_sucessor_df: pd.DataFrame,
+    overrides: Optional[Dict[str, Dict[str, object]]] = None,
+) -> List[Dict[str, object]]:
+    overrides = overrides or {}
     rows: List[Dict[str, object]] = []
     for idx, row in grid_df.iterrows():
         base = build_base_row(row)
@@ -81,6 +149,9 @@ def build_rows(grid_df: pd.DataFrame, sem_fonte_df: pd.DataFrame, sem_sucessor_d
         if row.get("F.cfop"):
             tags.append(f"CFOP:{row.get('F.cfop')}")
         base["tags"] = tags
+        override = overrides.get(base["id"])
+        if override:
+            base = apply_override(base, override)
         rows.append(base)
 
     for idx, row in sem_fonte_df.iterrows():
@@ -110,6 +181,9 @@ def build_rows(grid_df: pd.DataFrame, sem_fonte_df: pd.DataFrame, sem_sucessor_d
             "delta.dias": None,
             "tags": ["SEM_FONTE"],
         }
+        override = overrides.get(base["id"])
+        if override:
+            base = apply_override(base, override)
         rows.append(base)
 
     for idx, row in sem_sucessor_df.iterrows():
@@ -145,6 +219,9 @@ def build_rows(grid_df: pd.DataFrame, sem_fonte_df: pd.DataFrame, sem_sucessor_d
                 "tags": tags,
             }
         )
+        override = overrides.get(rows[-1]["id"])
+        if override:
+            rows[-1] = apply_override(rows[-1], override)
     return rows
 
 
@@ -230,7 +307,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     sem_fonte_df = read_csv(args.sem_fonte)
     sem_sucessor_df = read_csv(args.sem_sucessor)
 
-    rows = build_rows(grid_df, sem_fonte_df, sem_sucessor_df)
+    overrides_path = Path(args.out_jsonl).parent / "manual_overrides.jsonl"
+    overrides = load_manual_overrides(overrides_path)
+
+    rows = build_rows(grid_df, sem_fonte_df, sem_sucessor_df, overrides)
     write_jsonl(rows, Path(args.out_jsonl))
 
     schema = load_schema(args.schema)
