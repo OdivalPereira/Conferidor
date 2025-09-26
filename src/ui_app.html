@@ -570,10 +570,24 @@ function InspectorPanel({row,onClose,onMark,onReset}){
   );
 }
 
-function Table({columns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect,onManualStatus,onResetStatus}){
-  const setSort = (id)=>{
-    if(sortBy===id){ setSortDir(sortDir==="asc"?"desc":"asc"); } else { setSortBy(id); setSortDir("desc"); }
-  };
+function Table({columns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect,onManualStatus,onResetStatus,onSortChange}){
+  const setSort = useCallback((id)=>{
+    let nextSortBy = id;
+    let nextSortDir = "desc";
+    if(sortBy === id){
+      nextSortDir = sortDir === "asc" ? "desc" : "asc";
+    }
+    if(typeof onSortChange === "function"){
+      onSortChange(nextSortBy, nextSortDir);
+      return;
+    }
+    if(typeof setSortBy === "function"){
+      setSortBy(nextSortBy);
+    }
+    if(typeof setSortDir === "function"){
+      setSortDir(nextSortDir);
+    }
+  },[onSortChange, setSortBy, setSortDir, sortBy, sortDir]);
   return (
     React.createElement("div",{className:"overflow-auto rounded-xl shadow-soft border bg-white"},
       React.createElement("table",{className:"min-w-[1200px] w-full table-sticky"},
@@ -754,6 +768,16 @@ function App(){
     }
     loadGrid();
   },[loadGrid]);
+
+  useEffect(()=>{
+    setOffset(prev=> prev === 0 ? prev : 0);
+  },[filters, sortBy, sortDir]);
+
+  const handleSortChange = useCallback((nextSortBy, nextSortDir)=>{
+    setSortBy(nextSortBy);
+    setSortDir(nextSortDir);
+    setOffset(prev=> prev === 0 ? prev : 0);
+  },[]);
 
   const handleStatusFilter = useCallback((nextStatus)=>{
     const normalized = nextStatus ? String(nextStatus).toUpperCase() : "";
@@ -1093,7 +1117,7 @@ function App(){
       }),
       error && React.createElement("div",{className:"p-3 rounded bg-rose-100 text-rose-800 mb-3"}, String(error)),
       React.createElement(Table,{
-        columns: tableColumns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect: handleInspect,onManualStatus: handleManualStatus,onResetStatus: handleResetStatus
+        columns: tableColumns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect: handleInspect,onManualStatus: handleManualStatus,onResetStatus: handleResetStatus,onSortChange: handleSortChange
       }),
       React.createElement(InspectorPanel,{
         row: selectedRow,
