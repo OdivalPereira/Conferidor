@@ -98,7 +98,14 @@ function useApi(base=DEFAULT_API_BASE){
     if(!r.ok) throw new Error(await r.text());
     return await r.json();
   };
-  return {get,post};
+  const del = async (path, params={})=>{
+    const qs = new URLSearchParams(params).toString();
+    const url = baseUrl + path + (qs?("?"+qs):"");
+    const r = await fetch(url,{method:"DELETE"});
+    if(!r.ok) throw new Error(await r.text());
+    return await r.json();
+  };
+  return {get,post,del};
 }
 
 function Toolbar({stats,filters,setFilters,onReload,onExportX,onExportP,loading}){
@@ -378,17 +385,30 @@ function App(){
     });
   };
 
-  const handleManualStatus = (row, nextStatus)=>{
+  const handleManualStatus = async (row, nextStatus)=>{
     if(!row) return;
     const targetStatus = (nextStatus || "").toUpperCase();
+    if(!targetStatus) return;
     const rowKey = resolveRowId(row);
-    let previousStatus = null;
+    if(!rowKey) return;
+    const current = items.find(item=> resolveRowId(item) === rowKey) || row;
+    const previousStatus = (current?.status || current?.["match.status"] || "").toUpperCase();
+    const originalStatus = (current?.original_status || previousStatus || "").toUpperCase();
+    try{
+      await api.post("/api/manual-status",{
+        row_id: rowKey,
+        status: targetStatus,
+        original_status: originalStatus
+      });
+    }catch(e){
+      console.error("Falha ao salvar override manual", e);
+      alert("Falha ao salvar ajuste manual: " + e);
+      return;
+    }
     let updatedRow = null;
     setItems(prev=>prev.map(item=>{
       const key = resolveRowId(item);
       if(key !== rowKey) return item;
-      previousStatus = (item.status || "").toUpperCase();
-      const original = item.original_status || previousStatus;
       const motivos = new Set((item.motivos || "").split(";").filter(Boolean));
       motivos.add("ajuste_manual");
       const updated = {
@@ -397,7 +417,7 @@ function App(){
         "match.status": targetStatus,
         motivos: Array.from(motivos).join(";"),
         _manual: true,
-        original_status: original
+        original_status: item.original_status || originalStatus
       };
       updatedRow = updated;
       return updated;
@@ -406,25 +426,34 @@ function App(){
     if(previousStatus){ updateStats(previousStatus, targetStatus); }
   };
 
-  const handleResetStatus = (row)=>{
+  const handleResetStatus = async (row)=>{
     if(!row) return;
     const rowKey = resolveRowId(row);
-    let previousStatus = null;
-    let originalStatus = null;
+    if(!rowKey) return;
+    const current = items.find(item=> resolveRowId(item) === rowKey) || row;
+    const previousStatus = (current?.status || current?.["match.status"] || "").toUpperCase();
+    const originalStatus = (current?.original_status || current?.["match.status"] || current?.status || "").toUpperCase();
+    try{
+      await api.del("/api/manual-status",{row_id: rowKey});
+    }catch(e){
+      console.error("Falha ao remover override manual", e);
+      alert("Falha ao remover ajuste manual: " + e);
+      return;
+    }
     let updatedRow = null;
     setItems(prev=>prev.map(item=>{
       const key = resolveRowId(item);
       if(key !== rowKey) return item;
-      previousStatus = (item.status || "").toUpperCase();
-      originalStatus = (item.original_status || item["match.status"] || item.status || "").toUpperCase();
       const motivos = (item.motivos || "").split(";").filter(Boolean).filter(tag=>tag !== "ajuste_manual");
+      const baseStatus = (item.original_status || item["match.status"] || item.status || originalStatus || "").toUpperCase();
       const updated = {
         ...item,
-        status: originalStatus,
-        "match.status": originalStatus,
+        status: baseStatus,
+        "match.status": baseStatus,
         motivos: motivos.join(";"),
         _manual: false
       };
+      delete updated.original_status;
       updatedRow = updated;
       return updated;
     }));
