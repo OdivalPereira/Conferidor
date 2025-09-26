@@ -125,7 +125,43 @@ Abra `src/ui_app.html` no navegador (duplo‑clique).
 - O HTML detecta automaticamente a variavel global `window.UI_API_BASE` (defina-a no console do navegador ou em um script antes de abrir o arquivo) ou o parametro `?api=http://host:porta` na URL; por padrao usa `http://localhost:8000`.
 - Clique em uma linha da grid para abrir o painel lateral e usar os botoes de "Marcar OK" ou "Marcar Divergencia"; o botao "Reverter" volta para o status original.
 
-### 4.6 Exportação
+### 4.6 Processar via UI
+
+Com o servidor rodando e a página `ui_app.html` aberta:
+
+1. Clique em **Processar** na barra superior para abrir o modal de envio.
+2. Preencha cada campo com os CSVs esperados (`sucessor`, `entradas`, `saidas`, `servicos`, `fornecedores`, `plano`), sempre no formato `.csv`.
+3. Use **Enviar e processar**. O front envia os arquivos via `POST /api/uploads` e, em seguida, dispara `POST /api/process` com o `job_id` retornado.
+4. Acompanhe o painel **Andamento do processamento**: ele atualiza o status via `GET /api/process/{job_id}` a cada 4 s e permite cancelar com `DELETE /api/process/{job_id}`.
+5. Ao concluir (`status=success`), a UI recarrega KPIs (`GET /api/meta`) e a grid (`GET /api/grid`). Qualquer falha exibe o último log retornado por `GET /api/process/{job_id}/logs`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Usuário
+    participant UI
+    participant API
+    participant Pipeline
+    Usuário->>UI: Seleciona CSVs no modal Processar
+    UI->>API: POST /api/uploads (multipart)
+    API-->>UI: job_id + status inicial
+    UI->>API: POST /api/process {job_id}
+    API->>Pipeline: Executa loader→normalizer→matcher→issues→dataset
+    loop Polling
+        UI->>API: GET /api/process/{job_id}
+        API-->>UI: Status + logs parciais
+    end
+    API-->>UI: success + caminhos out/ui_*.json
+    UI-->>Usuário: Grid atualizada, exports liberados
+```
+
+#### Controles interativos da toolbar
+
+- **Cards de status (Total/OK/Alertas/Divergências/Sem Fonte/Sem Sucessor)**: são botões clicáveis que aplicam o filtro de status correspondente na grid. O estado selecionado fica destacado em azul; para voltar a "todos" use o card *Total*, o seletor ou o botão de limpar filtros.
+- **Limpar filtros**: redefine todos os filtros (`status`, `fonte_tipo`, `cfop`, busca) para o padrão e recarrega os dados da página atual.
+- **Limpar dados**: dispara `DELETE /api/data`, esvaziando os arquivos processados e limpando KPIs/grid. Requer novo processamento via modal para repovoar a UI.
+
+### 4.7 Exportação
 **Excel**:
 ```bash
 python src/export_xlsx.py   --grid out/match/reconc_grid.csv   --sem-fonte out/match/reconc_sem_fonte.csv   --sem-sucessor out/match/reconc_sem_sucessor.csv   --out out/relatorio_conferencia.xlsx
@@ -177,5 +213,25 @@ python src/export_pdf.py   --grid out/match/reconc_grid.csv   --out out/relatori
 
 ---
 
-## 10) Licença e autoria
+## 10) Endpoints da API da UI
+
+| Método | Endpoint | Uso principal |
+|--------|----------|---------------|
+| `GET`  | `/api/health` | Verificar disponibilidade do backend.
+| `GET`  | `/api/schema` | Entregar o schema da grid (colunas, tipos).
+| `GET`  | `/api/meta` | Retornar KPIs e presets exibidos nos cards.
+| `GET`  | `/api/grid` | Ler os registros paginados para a tabela.
+| `POST` | `/api/manual-status` | Persistir marcações manuais (OK/Divergência).
+| `DELETE` | `/api/manual-status` | Reverter marcações manuais para o status original.
+| `GET`  | `/api/files` | Listar arquivos recebidos para conferência.
+| `DELETE` | `/api/data` | Remover dados processados do diretório `out/`.
+| `POST` | `/api/uploads` | Receber os CSVs via modal de processamento.
+| `POST` | `/api/process` | Iniciar o job que executa o pipeline completo.
+| `GET`  | `/api/process/{job_id}` | Consultar status, progresso e métricas do job.
+| `GET`  | `/api/process/{job_id}/logs` | Obter logs estruturados do processamento.
+| `DELETE` | `/api/process/{job_id}` | Solicitar cancelamento do job em execução.
+| `POST` | `/api/export/xlsx` | Gerar o relatório Excel consolidado.
+| `POST` | `/api/export/pdf` | Gerar o relatório PDF (ou HTML fallback).
+
+## 11) Licença e autoria
 Projeto desenhado para **open‑source** voltado a escritórios contábeis. Adapte e publique conforme sua política.
