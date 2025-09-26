@@ -6,11 +6,18 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import yaml
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+TWO_CENTS = Decimal("0.01")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -57,12 +64,13 @@ def parse_decimal(text: Optional[str], decimal: str = ",") -> Optional[float]:
     if not match:
         return None
     try:
-        value = float(match.group(0))
-    except ValueError:
+        value = Decimal(match.group(0))
+    except (ValueError, InvalidOperation):
         return None
     if "(" in raw and ")" in raw:
         value = -abs(value)
-    return value
+    value = value.quantize(TWO_CENTS, rounding=ROUND_HALF_UP)
+    return float(value)
 
 
 def parse_date(text: Optional[str], formats: Iterable[str]) -> Optional[datetime]:
