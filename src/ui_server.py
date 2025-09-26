@@ -102,6 +102,11 @@ def ui_app() -> HTMLResponse:
     return HTMLResponse(_ui_app_html())
 
 
+@app.get("/ui", response_class=HTMLResponse)
+def ui_route() -> HTMLResponse:
+    return HTMLResponse(_ui_app_html())
+
+
 @app.get("/api/health")
 def api_health() -> Dict[str, object]:
     return {"ok": True, "data_dir": str(DATA_DIR)}
