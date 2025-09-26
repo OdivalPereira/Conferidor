@@ -332,19 +332,6 @@ function App(){
   useEffect(()=>{ loadMeta(); },[loadMeta]);
   useEffect(()=>{ loadGrid(); },[loadGrid]);
 
-  const toolbarStats = useMemo(()=>{
-    if(!meta || !meta.stats){
-      return null;
-    }
-    const base = meta.stats;
-    const uppercase = Object.entries(STATUS_KEY).reduce((acc,[upper,lower])=>{
-      acc[upper] = base[lower] ?? 0;
-      return acc;
-    },{});
-    const total = (base.ok||0)+(base.alerta||0)+(base.divergencia||0)+(base.sem_fonte||0)+(base.sem_sucessor||0);
-    return {...base, ...uppercase, TOTAL: total};
-  },[meta]);
-
   const exportX = async ()=>{
     try{
       const out = "relatorio_conferencia.xlsx";
@@ -427,6 +414,20 @@ function App(){
     if(updatedRow){ setSelectedRow(updatedRow); }
     if(previousStatus && originalStatus){ updateStats(previousStatus, originalStatus); }
   };
+
+  const toolbarStats = useMemo(()=>{
+    const stats = meta?.stats;
+    if(!stats){
+      return null;
+    }
+    const uppercase = Object.entries(STATUS_KEY).reduce((acc,[upper,lower])=>{
+      const value = stats[lower];
+      acc[upper] = typeof value === "number" ? value : Number(value) || 0;
+      return acc;
+    },{});
+    const total = Object.values(uppercase).reduce((sum,val)=> sum + (typeof val === "number" ? val : Number(val) || 0), 0);
+    return {...stats, ...uppercase, TOTAL: total};
+  },[meta]);
 
   return (
 
