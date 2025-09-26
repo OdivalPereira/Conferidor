@@ -68,6 +68,26 @@ def _discover_input_file(dados_dir: Path, key: str, used: Set[Path]) -> Optional
         return None
     candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
     return candidates[0][3]
+
+
+def choose_normalized_table(normalized_dir: Path, name: str) -> Path:
+    """Return the preferred normalized table file for *name*.
+
+    The matcher can consume either Parquet or CSV outputs. Prefer Parquet when
+    available, otherwise fall back to the CSV produced by the normalizer. When
+    neither file exists yet, keep the Parquet path so downstream checks can
+    surface the missing artefact.
+    """
+
+    parquet_path = normalized_dir / f"{name}.parquet"
+    if parquet_path.exists():
+        return parquet_path
+
+    csv_path = normalized_dir / f"{name}.csv"
+    if csv_path.exists():
+        return csv_path
+
+    return parquet_path
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the full reconciliation pipeline (loader → normalizer → matcher → issues → UI dataset)."
@@ -246,13 +266,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     matcher_args: List[str] = [
         "--sucessor",
-        str(normalized_dir / "sucessor.parquet"),
+        str(choose_normalized_table(normalized_dir, "sucessor")),
         "--entradas",
-        str(normalized_dir / "entradas.parquet"),
+        str(choose_normalized_table(normalized_dir, "entradas")),
         "--saidas",
-        str(normalized_dir / "saidas.parquet"),
+        str(choose_normalized_table(normalized_dir, "saidas")),
         "--servicos",
-        str(normalized_dir / "servicos.parquet"),
+        str(choose_normalized_table(normalized_dir, "servicos")),
         "--cfg-pesos",
         str(matching_path),
         "--cfg-tokens",

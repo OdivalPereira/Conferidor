@@ -1,10 +1,15 @@
-﻿import shutil
+import shutil
 import json
 import argparse
+import sys
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from loader import main as loader_main
 from normalizer import main as normalizer_main
@@ -13,9 +18,8 @@ from issues_engine import main as issues_main
 from ui_dataset_builder import main as dataset_main
 from export_xlsx import run as export_xlsx_run
 from export_pdf import run as export_pdf_run
-from run_pipeline import resolve_inputs
+from run_pipeline import resolve_inputs, choose_normalized_table
 
-ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
 CFG = ROOT / "cfg"
 
@@ -28,7 +32,7 @@ def copy_fixture(tmp_dir: Path, name: str, target_name: Optional[str] = None) ->
     return target
 
 
-def prepare_pipeline(tmp_path: Path):
+def prepare_pipeline(tmp_path: Path, *, force_csv: bool = False):
     dados_dir = tmp_path / "dados"
     staging_dir = tmp_path / "out" / "staging"
     normalized_dir = tmp_path / "out" / "normalized"
@@ -69,15 +73,28 @@ def prepare_pipeline(tmp_path: Path):
     ]
     assert normalizer_main(normalizer_args) == 0
 
+    if force_csv:
+        for name in ["sucessor", "entradas", "saidas", "servicos"]:
+            parquet_path = normalized_dir / f"{name}.parquet"
+            if parquet_path.exists():
+                parquet_path.unlink()
+
+    matcher_inputs: Dict[str, Path] = {
+        "sucessor": choose_normalized_table(normalized_dir, "sucessor"),
+        "entradas": choose_normalized_table(normalized_dir, "entradas"),
+        "saidas": choose_normalized_table(normalized_dir, "saidas"),
+        "servicos": choose_normalized_table(normalized_dir, "servicos"),
+    }
+
     matcher_args = [
         "--sucessor",
-        str(normalized_dir / "sucessor.parquet"),
+        str(matcher_inputs["sucessor"]),
         "--entradas",
-        str(normalized_dir / "entradas.parquet"),
+        str(matcher_inputs["entradas"]),
         "--saidas",
-        str(normalized_dir / "saidas.parquet"),
+        str(matcher_inputs["saidas"]),
         "--servicos",
-        str(normalized_dir / "servicos.parquet"),
+        str(matcher_inputs["servicos"]),
         "--cfg-pesos",
         str(CFG / "matching_pesos.yml"),
         "--cfop-map",
@@ -117,11 +134,11 @@ def prepare_pipeline(tmp_path: Path):
     ]
     assert dataset_main(dataset_args) == 0
 
-    return match_dir, tmp_path / "out" / "ui_grid.jsonl", tmp_path / "out" / "ui_meta.json"
+    return match_dir, tmp_path / "out" / "ui_grid.jsonl", tmp_path / "out" / "ui_meta.json", matcher_inputs
 
 
 def test_full_pipeline(tmp_path):
-    match_dir, grid_jsonl, meta_json = prepare_pipeline(tmp_path)
+    match_dir, grid_jsonl, meta_json, _ = prepare_pipeline(tmp_path)
 
     grid_csv = match_dir / "reconc_grid.csv"
     assert grid_csv.exists()
@@ -149,6 +166,20 @@ def test_full_pipeline(tmp_path):
     stats = meta.get("stats", {})
     assert stats.get("total_matches") == len(df)
     assert {"sem_fonte", "sem_sucessor"}.issubset(stats.keys())
+
+
+def test_pipeline_uses_csv_when_parquet_missing(tmp_path):
+    match_dir, _, _, matcher_inputs = prepare_pipeline(tmp_path, force_csv=True)
+
+    normalized_dir = tmp_path / "out" / "normalized"
+    for name, path in matcher_inputs.items():
+        assert path.suffix == ".csv"
+        assert path.exists()
+        assert not (normalized_dir / f"{name}.parquet").exists()
+
+    grid_csv = match_dir / "reconc_grid.csv"
+    assert grid_csv.exists()
+
 
 def test_exports(tmp_path):
     grid_csv = tmp_path / "grid.csv"
