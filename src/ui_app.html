@@ -335,25 +335,68 @@ function Badge({status}){
 
 function useApi(base=DEFAULT_API_BASE){
   const baseUrl = base ? String(base).replace(/\/$/, "") : "";
-  const get = async (path, params={})=>{
-    const qs = new URLSearchParams(params).toString();
-    const url = baseUrl + path + (qs?("?"+qs):"");
-    const r = await fetch(url);
-    if(!r.ok) throw new Error(await r.text());
-    return await r.json();
+
+  const isPlainObject = (value)=> Object.prototype.toString.call(value) === "[object Object]";
+
+  const mergeHeaders = (...inputs)=>{
+    const headers = new Headers();
+    inputs.filter(Boolean).forEach(input=>{
+      if(input instanceof Headers){
+        input.forEach((value,key)=>{ headers.set(key,value); });
+        return;
+      }
+      if(Array.isArray(input)){
+        input.forEach(entry=>{
+          if(Array.isArray(entry) && entry.length >= 2){
+            headers.set(entry[0], entry[1]);
+          }
+        });
+        return;
+      }
+      if(typeof input === "object"){
+        Object.entries(input).forEach(([key,value])=>{
+          if(value != null){
+            headers.set(key, value);
+          }
+        });
+      }
+    });
+    return headers;
   };
-  const post = async (path, body)=>{
-    const r = await fetch(baseUrl + path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
-    if(!r.ok) throw new Error(await r.text());
-    return await r.json();
+
+  const buildUrl = (path, params)=>{
+    const qs = params && Object.keys(params).length ? new URLSearchParams(Object.entries(params).filter(([,value])=> value !== undefined && value !== null)).toString() : "";
+    return baseUrl + path + (qs ? ("?" + qs) : "");
   };
-  const del = async (path, params={})=>{
-    const qs = new URLSearchParams(params).toString();
-    const url = baseUrl + path + (qs?("?"+qs):"");
-    const r = await fetch(url,{method:"DELETE"});
-    const text = await r.text();
-    if(!r.ok){
-      throw new Error(text || r.statusText || "Request failed");
+
+  const request = async (path, options={})=>{
+    const {method="GET", params, body, headers: extraHeaders, init: rawInit, ...rest} = options || {};
+    const url = buildUrl(path, params || {});
+    const init = {...(rawInit || {}), ...rest, method};
+    const headers = mergeHeaders(rawInit?.headers, extraHeaders);
+
+    if(typeof body !== "undefined"){
+      if(body instanceof FormData){
+        init.body = body;
+        headers.delete("Content-Type");
+      }else if(isPlainObject(body)){
+        init.body = JSON.stringify(body);
+        if(!headers.has("Content-Type")){
+          headers.set("Content-Type","application/json");
+        }
+      }else{
+        init.body = body;
+      }
+    }
+
+    if([...headers.keys()].length){
+      init.headers = headers;
+    }
+
+    const response = await fetch(url, init);
+    const text = await response.text();
+    if(!response.ok){
+      throw new Error(text || response.statusText || "Request failed");
     }
     if(!text){
       return {};
@@ -364,12 +407,12 @@ function useApi(base=DEFAULT_API_BASE){
       return {raw:text};
     }
   };
-  const upload = async (path, formData)=>{
-    const r = await fetch(baseUrl + path,{method:"POST",body:formData});
-    if(!r.ok) throw new Error(await r.text());
-    return await r.json();
-  };
-  return {get,post,del,upload};
+
+  const get = (path, options)=> request(path,{...(options||{}), method:"GET"});
+  const post = (path, options)=> request(path,{...(options||{}), method:"POST"});
+  const del = (path, options)=> request(path,{...(options||{}), method:"DELETE"});
+
+  return {get,post,del,request};
 }
 
 function UploadModal({open,onClose,onConfirm,submitting,error}){
@@ -753,7 +796,7 @@ function App(){
         sort_by: sortBy || undefined,
         sort_dir: sortDir || undefined
       };
-      const res = await api.get("/api/grid", params);
+      const res = await api.get("/api/grid",{params});
       setItems(res.items || []);
       setTotal(res.total_filtered || 0);
     }catch(e){ setError(String(e)); setItems([]); setTotal(0); }
@@ -845,14 +888,14 @@ function App(){
   const exportX = async ()=>{
     try{
       const out = "relatorio_conferencia.xlsx";
-      const res = await api.post("/api/export/xlsx",{grid:"reconc_grid.csv",sem_fonte:"reconc_sem_fonte.csv",sem_sucessor:"reconc_sem_sucessor.csv",out});
+      const res = await api.post("/api/export/xlsx",{body:{grid:"reconc_grid.csv",sem_fonte:"reconc_sem_fonte.csv",sem_sucessor:"reconc_sem_sucessor.csv",out}});
       if(res.download){ window.open(res.download,"_blank"); }
     }catch(e){ alert("Falha no export XLSX: "+e); }
   };
   const exportP = async ()=>{
     try{
       const out = "relatorio_conferencia.pdf";
-      const res = await api.post("/api/export/pdf",{grid:"reconc_grid.csv",out,cliente:"Cliente",periodo:"Periodo"});
+      const res = await api.post("/api/export/pdf",{body:{grid:"reconc_grid.csv",out,cliente:"Cliente",periodo:"Periodo"}});
       const link = res.download || res.download_html;
       if(link){ window.open(link,"_blank"); }
     }catch(e){ alert("Falha no export PDF: "+e); }
@@ -894,12 +937,12 @@ function App(){
     setUploading(true);
     setUploadError(null);
     try{
-      const uploadRes = await api.upload("/api/uploads",formData);
+      const uploadRes = await api.post("/api/uploads",{body:formData});
       const jobId = uploadRes?.job_id;
       if(jobId){
         let initialStatus = uploadRes?.status || null;
         try{
-          const processRes = await api.post("/api/process",{job_id: jobId});
+          const processRes = await api.post("/api/process",{body:{job_id: jobId}});
           initialStatus = processRes?.status || initialStatus || "running";
         }catch(processErr){
           const message = processErr && processErr.message ? processErr.message : String(processErr);
@@ -952,9 +995,11 @@ function App(){
     const originalStatus = (current?.original_status || previousStatus || "").toUpperCase();
     try{
       await api.post("/api/manual-status",{
-        row_id: rowKey,
-        status: targetStatus,
-        original_status: originalStatus
+        body:{
+          row_id: rowKey,
+          status: targetStatus,
+          original_status: originalStatus
+        }
       });
     }catch(e){
       console.error("Falha ao salvar override manual", e);
@@ -990,7 +1035,7 @@ function App(){
     const previousStatus = (current?.status || current?.["match.status"] || "").toUpperCase();
     const originalStatus = (current?.original_status || current?.["match.status"] || current?.status || "").toUpperCase();
     try{
-      await api.del("/api/manual-status",{row_id: rowKey});
+      await api.del("/api/manual-status",{params:{row_id: rowKey}});
     }catch(e){
       console.error("Falha ao remover override manual", e);
       alert("Falha ao remover ajuste manual: " + e);
