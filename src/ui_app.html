@@ -24,7 +24,7 @@
 <div id="root"></div>
 
 <script type="text/javascript">
-const {useState,useEffect,useMemo,useCallback,Fragment} = React;
+const {useState,useEffect,useMemo,useCallback,useRef,Fragment} = React;
 
 const DEFAULT_API_BASE = (() => {
   if (typeof window !== "undefined") {
@@ -354,49 +354,51 @@ function UploadModal({open,onClose,onConfirm,submitting,error}){
   );
 }
 
-function Toolbar({stats,filters,setFilters,onReload,onExportX,onExportP,loading,disabled}){
+function Toolbar({stats,filters,onStatusFilter,onFilterChange,onReload,onExportX,onExportP,loading,disabled}){
+  const statusValue = (filters?.status || "");
+  const statusCards = [
+    {key:"TOTAL",label:"Total",valueKey:"TOTAL",statusValue:"",valueClass:"text-xl font-bold"},
+    {key:"OK",label:"OK",valueKey:"OK",statusValue:"OK",valueClass:"text-xl font-bold text-emerald-700"},
+    {key:"ALERTA",label:"Alertas",valueKey:"ALERTA",statusValue:"ALERTA",valueClass:"text-xl font-bold text-amber-700"},
+    {key:"DIVERGENCIA",label:"Divergências",valueKey:"DIVERGENCIA",statusValue:"DIVERGENCIA",valueClass:"text-xl font-bold text-rose-700"},
+    {key:"SEM_FONTE",label:"Sem Fonte",valueKey:"SEM_FONTE",statusValue:"SEM_FONTE",valueClass:"text-xl font-bold text-slate-700"},
+    {key:"SEM_SUCESSOR",label:"Sem Sucessor",valueKey:"SEM_SUCESSOR",statusValue:"SEM_SUCESSOR",valueClass:"text-xl font-bold text-slate-700"}
+  ];
   return (
     React.createElement("div",{className:"flex flex-col gap-3 md:flex-row md:items-end md:justify-between mb-4"},
       React.createElement("div",{className:"grid grid-cols-2 md:grid-cols-6 gap-3"},
-        React.createElement("div",{className:"p-3 rounded-xl bg-white shadow-soft"},
-          React.createElement("div",{className:"text-xs text-slate-500"},"Total"),
-          React.createElement("div",{className:"text-xl font-bold"}, stats?.TOTAL ?? "—")
-        ),
-        React.createElement("div",{className:"p-3 rounded-xl bg-white shadow-soft"},
-          React.createElement("div",{className:"text-xs text-slate-500"},"OK"),
-          React.createElement("div",{className:"text-xl font-bold text-emerald-700"}, stats?.OK ?? "—")
-        ),
-        React.createElement("div",{className:"p-3 rounded-xl bg-white shadow-soft"},
-          React.createElement("div",{className:"text-xs text-slate-500"},"Alertas"),
-          React.createElement("div",{className:"text-xl font-bold text-amber-700"}, stats?.ALERTA ?? "—")
-        ),
-        React.createElement("div",{className:"p-3 rounded-xl bg-white shadow-soft"},
-          React.createElement("div",{className:"text-xs text-slate-500"},"Divergências"),
-          React.createElement("div",{className:"text-xl font-bold text-rose-700"}, stats?.DIVERGENCIA ?? "—")
-        ),
-        React.createElement("div",{className:"p-3 rounded-xl bg-white shadow-soft"},
-          React.createElement("div",{className:"text-xs text-slate-500"},"Sem Fonte"),
-          React.createElement("div",{className:"text-xl font-bold text-slate-700"}, stats?.SEM_FONTE ?? "—")
-        ),
-        React.createElement("div",{className:"p-3 rounded-xl bg-white shadow-soft"},
-          React.createElement("div",{className:"text-xs text-slate-500"},"Sem Sucessor"),
-          React.createElement("div",{className:"text-xl font-bold text-slate-700"}, stats?.SEM_SUCESSOR ?? "—")
-        ),
+        statusCards.map(card=>{
+          const isActive = statusValue === (card.statusValue || "");
+          const baseClass = "p-3 rounded-xl bg-white shadow-soft border-2 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-60";
+          const stateClass = isActive ? " border-indigo-500 bg-indigo-50" : " border-transparent hover:border-slate-200";
+          return React.createElement("button",{
+            key: card.key,
+            type:"button",
+            className: baseClass + stateClass,
+            onClick: ()=>{ if(onStatusFilter){ onStatusFilter(card.statusValue || ""); } },
+            disabled,
+            role:"button",
+            "aria-pressed": isActive
+          },[
+            React.createElement("div",{key:"label",className:"text-xs text-slate-500"}, card.label),
+            React.createElement("div",{key:"value",className: card.valueClass}, stats?.[card.valueKey] ?? "—")
+          ]);
+        })
       ),
       React.createElement("div",{className:"flex flex-col gap-2 md:w-[520px]"},
         React.createElement("div",{className:"flex gap-2"},
-          React.createElement("select",{className:"px-2 py-2 rounded-lg bg-white border w-40 disabled:opacity-50",value:filters.status,disabled,onChange:e=>setFilters(f=>({...f,status:e.target.value}))},
+          React.createElement("select",{className:"px-2 py-2 rounded-lg bg-white border w-40 disabled:opacity-50",value:filters.status,disabled,onChange:e=>onStatusFilter && onStatusFilter(e.target.value)},
             React.createElement("option",{value:""},"Status — todos"),
             ["OK","ALERTA","DIVERGENCIA","SEM_FONTE","SEM_SUCESSOR"].map(s=>React.createElement("option",{key:s,value:s},s))
           ),
-          React.createElement("select",{className:"px-2 py-2 rounded-lg bg-white border w-40 disabled:opacity-50",value:filters.fonte_tipo,disabled,onChange:e=>setFilters(f=>({...f,fonte_tipo:e.target.value}))},
+          React.createElement("select",{className:"px-2 py-2 rounded-lg bg-white border w-40 disabled:opacity-50",value:filters.fonte_tipo,disabled,onChange:e=>onFilterChange && onFilterChange("fonte_tipo", e.target.value)},
             React.createElement("option",{value:""},"Fonte — todas"),
             ["ENTRADA","SAIDA","SERVICO"].map(s=>React.createElement("option",{key:s,value:s},s))
           ),
-          React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1 disabled:opacity-50",placeholder:"CFOP",value:filters.cfop,disabled,onChange:e=>setFilters(f=>({...f,cfop:e.target.value}))})
+          React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1 disabled:opacity-50",placeholder:"CFOP",value:filters.cfop,disabled,onChange:e=>onFilterChange && onFilterChange("cfop", e.target.value)})
         ),
         React.createElement("div",{className:"flex gap-2"},
-          React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1 disabled:opacity-50",placeholder:"Buscar (histórico, doc, tags)...",value:filters.q,disabled,onChange:e=>setFilters(f=>({...f,q:e.target.value}))}),
+          React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1 disabled:opacity-50",placeholder:"Buscar (histórico, doc, tags)...",value:filters.q,disabled,onChange:e=>onFilterChange && onFilterChange("q", e.target.value)}),
           React.createElement("button",{onClick:onReload,disabled:loading||disabled,className:"px-3 py-2 rounded-lg bg-slate-900 text-white disabled:opacity-50 disabled:cursor-not-allowed"}, loading?"Carregando...":"Atualizar")
         ),
         React.createElement("div",{className:"flex gap-2"},
@@ -498,10 +500,10 @@ function Paginator({offset,setOffset,limit,setLimit,total,go}){
     React.createElement("div",{className:"flex items-center justify-between mt-3"},
       React.createElement("div",null, `Mostrando ${Math.min(total, offset+1)}-${Math.min(total, offset+limit)} de ${total}`),
       React.createElement("div",{className:"flex items-center gap-2"},
-        React.createElement("button",{disabled:!canPrev,onClick:()=>{setOffset(Math.max(0, offset-limit)); go();},className:"px-3 py-1 rounded bg-slate-200 disabled:opacity-50"},"<"),
+        React.createElement("button",{disabled:!canPrev,onClick:()=>{ if(!canPrev) return; const nextOffset = Math.max(0, offset-limit); if(typeof go === "function"){ go(nextOffset); } },className:"px-3 py-1 rounded bg-slate-200 disabled:opacity-50"},"<"),
         React.createElement("span",null, `Pagina ${page}/${pages}`),
-        React.createElement("button",{disabled:!canNext,onClick:()=>{setOffset(offset+limit); go();},className:"px-3 py-1 rounded bg-slate-200 disabled:opacity-50"},">"),
-        React.createElement("select",{className:"px-2 py-1 rounded bg-white border",value:limit,onChange:e=>{setLimit(parseInt(e.target.value,10)); setOffset(0); go();}},
+        React.createElement("button",{disabled:!canNext,onClick:()=>{ if(!canNext) return; const nextOffset = offset+limit; if(typeof go === "function"){ go(nextOffset); } },className:"px-3 py-1 rounded bg-slate-200 disabled:opacity-50"},">"),
+        React.createElement("select",{className:"px-2 py-1 rounded bg-white border",value:limit,onChange:e=>{const nextLimit = parseInt(e.target.value,10); setOffset(0); setLimit(nextLimit);}},
           [50,100,200,500,1000].map(n=>React.createElement("option",{key:n,value:n}, n))
         )
       )
@@ -551,6 +553,7 @@ function App(){
   const [jobCanceling,setJobCanceling] = useState(false);
   const normalizedJobStatus = String(jobStatus?.status || "").toLowerCase();
   const jobRunning = Boolean(currentJobId) && JOB_ACTIVE_STATES.has(normalizedJobStatus);
+  const skipNextAutoLoad = useRef(false);
 
   const resolveRowId = useCallback((entry)=> entry?.id ?? [entry?.sucessor_idx, entry?.fonte_tipo, entry?.fonte_idx].filter(Boolean).join('-'), []);
 
@@ -588,11 +591,18 @@ function App(){
     }catch(e){ console.error(e); }
   },[api]);
 
-  const loadGrid = useCallback(async ()=>{
+  const loadGrid = useCallback(async (nextOffset)=>{
+    const hasOverride = typeof nextOffset === "number" && !Number.isNaN(nextOffset);
+    const targetOffset = hasOverride ? Math.max(0, nextOffset) : offset;
+    if(hasOverride && nextOffset !== offset){
+      skipNextAutoLoad.current = true;
+      setOffset(targetOffset);
+    }
     setLoading(true); setError(null);
     try{
       const params = {
-        limit, offset,
+        limit,
+        offset: targetOffset,
         status: filters.status || undefined,
         fonte_tipo: filters.fonte_tipo || undefined,
         cfop: filters.cfop || undefined,
@@ -605,10 +615,38 @@ function App(){
       setTotal(res.total_filtered || 0);
     }catch(e){ setError(String(e)); setItems([]); setTotal(0); }
     finally{ setLoading(false); }
-  },[api, filters.status, filters.fonte_tipo, filters.cfop, filters.q, sortBy, sortDir, limit, offset]);
+  },[api, filters.status, filters.fonte_tipo, filters.cfop, filters.q, sortBy, sortDir, limit, offset, skipNextAutoLoad]);
 
   useEffect(()=>{ loadMeta(); },[loadMeta]);
-  useEffect(()=>{ loadGrid(); },[loadGrid]);
+  useEffect(()=>{
+    if(skipNextAutoLoad.current){
+      skipNextAutoLoad.current = false;
+      return;
+    }
+    loadGrid();
+  },[loadGrid]);
+
+  const handleStatusFilter = useCallback((nextStatus)=>{
+    const normalized = nextStatus ? String(nextStatus).toUpperCase() : "";
+    setOffset(0);
+    setFilters(prev=>{
+      const currentStatus = prev?.status || "";
+      if(currentStatus === normalized){
+        return prev;
+      }
+      return {...prev, status: normalized};
+    });
+  },[]);
+
+  const handleFilterChange = useCallback((field, value)=>{
+    setOffset(0);
+    setFilters(prev=>{
+      if(!prev || prev[field] === value){
+        return prev;
+      }
+      return {...prev, [field]: value};
+    });
+  },[]);
 
   const exportX = async ()=>{
     try{
@@ -679,13 +717,13 @@ function App(){
         setJobStatus({job_id: jobId, status: initialStatus});
         if(String(initialStatus||"").toLowerCase() === "success"){
           await loadMeta();
-          await loadGrid();
+          await loadGrid(0);
           setCurrentJobId(null);
           setJobStatus(null);
         }
       }else{
         await loadMeta();
-        await loadGrid();
+        await loadGrid(0);
       }
       setShowUploadModal(false);
     }catch(err){
@@ -801,7 +839,7 @@ function App(){
         const status = res?.status || null;
         const normalized = String(status||"").toLowerCase();
         if(normalized === "success"){
-          await Promise.all([loadMeta(), loadGrid()]);
+          await Promise.all([loadMeta(), loadGrid(0)]);
           if(cancelled){
             return;
           }
@@ -871,8 +909,10 @@ function App(){
       }) : null,
       React.createElement(Toolbar,{
         stats: toolbarStats ?? computeToolbarStats(meta),
-        filters,setFilters,
-        onReload:()=>{ setOffset(0); loadGrid(); },
+        filters,
+        onStatusFilter: handleStatusFilter,
+        onFilterChange: handleFilterChange,
+        onReload:()=> loadGrid(0),
         onExportX: exportX,
         onExportP: exportP,
         loading,
