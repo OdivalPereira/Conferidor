@@ -246,6 +246,20 @@ function formatBRL(x){
   return n.toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 }
 
+function computeToolbarStats(meta){
+  const stats = meta?.stats;
+  if(!stats){
+    return null;
+  }
+  const uppercase = Object.entries(STATUS_KEY).reduce((acc,[upper,lower])=>{
+    const value = stats[lower];
+    acc[upper] = typeof value === "number" ? value : Number(value) || 0;
+    return acc;
+  },{});
+  const total = Object.values(uppercase).reduce((sum,val)=> sum + (typeof val === "number" ? val : Number(val) || 0), 0);
+  return {...stats, ...uppercase, TOTAL: total};
+}
+
 function App(){
   const api = useApi(); // ajuste `window.UI_API_BASE` ou use ?api= para apontar para outro host/porta
   const [schema,setSchema] = useState(null);
@@ -416,19 +430,7 @@ function App(){
     if(previousStatus && originalStatus){ updateStats(previousStatus, originalStatus); }
   };
 
-  const toolbarStats = useMemo(()=>{
-    const stats = meta?.stats;
-    if(!stats){
-      return null;
-    }
-    const uppercase = Object.entries(STATUS_KEY).reduce((acc,[upper,lower])=>{
-      const value = stats[lower];
-      acc[upper] = typeof value === "number" ? value : Number(value) || 0;
-      return acc;
-    },{});
-    const total = Object.values(uppercase).reduce((sum,val)=> sum + (typeof val === "number" ? val : Number(val) || 0), 0);
-    return {...stats, ...uppercase, TOTAL: total};
-  },[meta]);
+  const toolbarStats = useMemo(()=> computeToolbarStats(meta),[meta]);
 
   return (
 
@@ -438,7 +440,7 @@ function App(){
         React.createElement("p",{className:"text-slate-600"},"Carrega ", React.createElement("code",null,"ui_grid.jsonl"), " do servidor local e exibe a grade com filtros e exports.")
       ),
       React.createElement(Toolbar,{
-        stats: toolbarStats,
+        stats: toolbarStats ?? computeToolbarStats(meta),
         filters,setFilters,
         onReload:()=>{ setOffset(0); loadGrid(); },
         onExportX: exportX,
