@@ -63,6 +63,15 @@ const STATUS_KEY = {
   SEM_SUCESSOR: 'sem_sucessor'
 };
 
+const REQUIRED_UPLOADS = [
+  {type: "sucessor", label: "Sucessor (contábil)", hint: "Ex: sucessor.csv"},
+  {type: "entradas", label: "Suprema Entradas", hint: "Ex: suprema_entradas.csv"},
+  {type: "saidas", label: "Suprema Saídas", hint: "Ex: suprema_saidas.csv"},
+  {type: "servicos", label: "Suprema Serviços", hint: "Ex: suprema_servicos.csv"},
+  {type: "fornecedores", label: "Fornecedores", hint: "Ex: fornecedores.csv"},
+  {type: "plano", label: "Plano de Contas", hint: "Ex: plano_contas.csv"}
+];
+
 const DEFAULT_COLUMNS = [
   {id:"strategy",label:"Regra",type:"text"},
   {id:"score",label:"Score",type:"number"},
@@ -105,7 +114,118 @@ function useApi(base=DEFAULT_API_BASE){
     if(!r.ok) throw new Error(await r.text());
     return await r.json();
   };
-  return {get,post,del};
+  const upload = async (path, formData)=>{
+    const r = await fetch(baseUrl + path,{method:"POST",body:formData});
+    if(!r.ok) throw new Error(await r.text());
+    return await r.json();
+  };
+  return {get,post,del,upload};
+}
+
+function UploadModal({open,onClose,onConfirm,submitting,error}){
+  const [files,setFiles] = useState({});
+  const [missing,setMissing] = useState([]);
+  const [messages,setMessages] = useState([]);
+
+  useEffect(()=>{
+    if(open){
+      setFiles({});
+      setMissing([]);
+      setMessages([]);
+    }
+  },[open]);
+
+  if(!open){
+    return null;
+  }
+
+  const handleFileChange = (type,fileList)=>{
+    const file = fileList && fileList.length ? fileList[0] : null;
+    setFiles(prev=>({...prev,[type]:file}));
+    setMissing(prev=>prev.filter(item=>item!==type));
+  };
+
+  const handleClose = ()=>{
+    if(submitting){
+      return;
+    }
+    onClose();
+  };
+
+  const handleSubmit = async (event)=>{
+    if(event && typeof event.preventDefault === "function"){ event.preventDefault(); }
+    const requiredMissing = REQUIRED_UPLOADS.filter(item=>!files[item.type]);
+    if(requiredMissing.length){
+      setMissing(requiredMissing.map(item=>item.type));
+      setMessages(requiredMissing.map(item=>`Selecione o arquivo de ${item.label}.`));
+      return;
+    }
+    setMessages([]);
+    const formData = new FormData();
+    REQUIRED_UPLOADS.forEach(item=>{
+      const file = files[item.type];
+      if(file){
+        formData.append("files",file,file.name);
+      }
+    });
+    try{
+      await onConfirm(formData);
+    }catch(err){
+      setMessages([String(err)]);
+    }
+  };
+
+  const combinedMessages = error ? [...messages,String(error)] : messages;
+
+  return (
+    React.createElement("div",{className:"fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center px-4"},
+      React.createElement("div",{className:"relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl"},
+        React.createElement("button",{className:"absolute right-4 top-4 text-slate-400 hover:text-slate-600",onClick:handleClose},
+          "✕"
+        ),
+        React.createElement("form",{onSubmit:handleSubmit,className:"p-6 md:p-8"},
+          React.createElement("div",{className:"mb-6 space-y-2"},
+            React.createElement("h3",{className:"text-xl font-semibold text-slate-900"},"Enviar CSVs"),
+            React.createElement("p",{className:"text-sm text-slate-600"},"Selecione os arquivos CSV necessários para iniciar o processamento."),
+          ),
+          React.createElement("div",{className:"grid gap-4"},
+            REQUIRED_UPLOADS.map(item=>{
+              const hasError = missing.includes(item.type);
+              const borderClass = hasError ? "border-rose-400 focus:border-rose-500 focus:ring-rose-200" : "border-slate-200 focus:border-slate-400 focus:ring-slate-200";
+              return React.createElement("label",{key:item.type,className:"flex flex-col gap-2 rounded-xl border bg-slate-50/60 p-4"},
+                React.createElement("div",{className:"flex flex-col"},
+                  React.createElement("span",{className:"text-sm font-semibold text-slate-700"}, item.label),
+                  React.createElement("span",{className:"text-xs text-slate-500"}, item.hint)
+                ),
+                React.createElement("input",{
+                  type:"file",
+                  accept:".csv",
+                  className:`block w-full rounded-lg border bg-white px-3 py-2 text-sm shadow-sm focus:outline-none ${borderClass}`,
+                  onChange:e=>handleFileChange(item.type,e.target.files)
+                })
+              );
+            })
+          ),
+          combinedMessages.length ? React.createElement("div",{className:"mt-6 space-y-1 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"},
+            combinedMessages.map((msg,idx)=>React.createElement("div",{key:idx},msg))
+          ) : null,
+          React.createElement("div",{className:"mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"},
+            React.createElement("button",{
+              type:"button",
+              onClick:handleClose,
+              disabled:submitting,
+              className:"rounded-lg bg-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-300 disabled:opacity-60"
+            },"Cancelar"),
+            React.createElement("button",{
+              type:"submit",
+              disabled:submitting,
+              className:"rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+            }, submitting?"Enviando...":"Enviar e processar")
+          )
+        )
+      )
+    )
+  );
 }
 
 function Toolbar({stats,filters,setFilters,onReload,onExportX,onExportP,loading}){
@@ -297,6 +417,9 @@ function App(){
   const [limit,setLimit] = useState(100);
   const [offset,setOffset] = useState(0);
   const [selectedRow,setSelectedRow] = useState(null);
+  const [showUploadModal,setShowUploadModal] = useState(false);
+  const [uploading,setUploading] = useState(false);
+  const [uploadError,setUploadError] = useState(null);
 
   const resolveRowId = useCallback((entry)=> entry?.id ?? [entry?.sucessor_idx, entry?.fonte_tipo, entry?.fonte_idx].filter(Boolean).join('-'), []);
 
@@ -370,6 +493,32 @@ function App(){
       const link = res.download || res.download_html;
       if(link){ window.open(link,"_blank"); }
     }catch(e){ alert("Falha no export PDF: "+e); }
+  };
+
+  const openUploadModal = ()=>{
+    setUploadError(null);
+    setShowUploadModal(true);
+  };
+
+  const closeUploadModal = ()=>{
+    setShowUploadModal(false);
+    setUploadError(null);
+  };
+
+  const handleUploadConfirm = async (formData)=>{
+    setUploading(true);
+    setUploadError(null);
+    try{
+      await api.upload("/api/uploads",formData);
+      await loadMeta();
+      await loadGrid();
+      setShowUploadModal(false);
+    }catch(err){
+      const message = err && err.message ? err.message : String(err);
+      setUploadError(message);
+    }finally{
+      setUploading(false);
+    }
   };
 
   const updateStats = (prevStatus, nextStatus)=>{
@@ -466,9 +615,18 @@ function App(){
   return (
 
     React.createElement("div",{className:"max-w-[1400px] mx-auto p-4 md:p-6"},
-      React.createElement("div",{className:"mb-4"},
-        React.createElement("h2",{className:"text-2xl font-semibold"},"App de Conferencia - UI"),
-        React.createElement("p",{className:"text-slate-600"},"Carrega ", React.createElement("code",null,"ui_grid.jsonl"), " do servidor local e exibe a grade com filtros e exports.")
+      React.createElement("div",{className:"mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"},
+        React.createElement("div",{className:"space-y-1"},
+          React.createElement("h2",{className:"text-2xl font-semibold"},"App de Conferencia - UI"),
+          React.createElement("p",{className:"text-slate-600"},"Carrega ", React.createElement("code",null,"ui_grid.jsonl"), " do servidor local e exibe a grade com filtros e exports.")
+        ),
+        React.createElement("div",{className:"flex gap-2"},
+          React.createElement("button",{
+            onClick:openUploadModal,
+            disabled:uploading,
+            className:"rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+          }, uploading?"Processando...":"Processar")
+        )
       ),
       React.createElement(Toolbar,{
         stats: toolbarStats ?? computeToolbarStats(meta),
@@ -488,7 +646,14 @@ function App(){
         onMark: handleManualStatus,
         onReset: handleResetStatus
       }),
-      React.createElement(Paginator,{offset,setOffset,limit,setLimit,total,go:loadGrid})
+      React.createElement(Paginator,{offset,setOffset,limit,setLimit,total,go:loadGrid}),
+      React.createElement(UploadModal,{
+        open: showUploadModal,
+        onClose: closeUploadModal,
+        onConfirm: handleUploadConfirm,
+        submitting: uploading,
+        error: uploadError
+      })
     )
   );
 }
