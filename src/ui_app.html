@@ -63,6 +63,12 @@ const STATUS_KEY = {
   SEM_SUCESSOR: 'sem_sucessor'
 };
 
+const FILTER_DEFAULTS = Object.freeze({status:"", fonte_tipo:"", cfop:"", q:""});
+
+function createDefaultFilters(){
+  return {...FILTER_DEFAULTS};
+}
+
 const REQUIRED_UPLOADS = [
   {type: "sucessor", label: "Sucessor (contábil)", hint: "Ex: sucessor.csv"},
   {type: "entradas", label: "Suprema Entradas", hint: "Ex: suprema_entradas.csv"},
@@ -354,7 +360,7 @@ function UploadModal({open,onClose,onConfirm,submitting,error}){
   );
 }
 
-function Toolbar({stats,filters,onStatusFilter,onFilterChange,onReload,onExportX,onExportP,loading,disabled}){
+function Toolbar({stats,filters,onStatusFilter,onFilterChange,onReload,onExportX,onExportP,onClearFilters,loading,disabled}){
   const statusValue = (filters?.status || "");
   const statusCards = [
     {key:"TOTAL",label:"Total",valueKey:"TOTAL",statusValue:"",valueClass:"text-xl font-bold"},
@@ -398,10 +404,11 @@ function Toolbar({stats,filters,onStatusFilter,onFilterChange,onReload,onExportX
           React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1 disabled:opacity-50",placeholder:"CFOP",value:filters.cfop,disabled,onChange:e=>onFilterChange && onFilterChange("cfop", e.target.value)})
         ),
         React.createElement("div",{className:"flex gap-2"},
-          React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1 disabled:opacity-50",placeholder:"Buscar (histórico, doc, tags)...",value:filters.q,disabled,onChange:e=>onFilterChange && onFilterChange("q", e.target.value)}),
+          React.createElement("input",{className:"px-3 py-2 rounded-lg bg-white border flex-1 disabled:opacity-50",placeholder:"Buscar (histórico, doc, tags)...",value:filters.q,disabled,onChange:e=>onFilterChange && onFilterChange("q", e.target.value),onKeyDown:e=>{if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); if(onFilterChange){ onFilterChange("q",""); } e.target.blur(); }}}),
           React.createElement("button",{onClick:onReload,disabled:loading||disabled,className:"px-3 py-2 rounded-lg bg-slate-900 text-white disabled:opacity-50 disabled:cursor-not-allowed"}, loading?"Carregando...":"Atualizar")
         ),
         React.createElement("div",{className:"flex gap-2"},
+          React.createElement("button",{onClick:onClearFilters,disabled:disabled,className:"px-3 py-2 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"}, "Limpar filtros"),
           React.createElement("button",{onClick:onExportX,disabled:disabled,className:"px-3 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"}, "Exportar Excel"),
           React.createElement("button",{onClick:onExportP,disabled:disabled,className:"px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"}, "Exportar PDF"),
           React.createElement("a",{href:"/files/",target:"_blank",className:"px-3 py-2 rounded-lg bg-slate-200"}, "Arquivos")
@@ -539,7 +546,7 @@ function App(){
   const [total,setTotal] = useState(0);
   const [loading,setLoading] = useState(false);
   const [error,setError] = useState(null);
-  const [filters,setFilters] = useState({status:"",fonte_tipo:"",cfop:"",q:""});
+  const [filters,setFilters] = useState(()=>createDefaultFilters());
   const [sortBy,setSortBy] = useState("score");
   const [sortDir,setSortDir] = useState("desc");
   const [limit,setLimit] = useState(100);
@@ -591,22 +598,23 @@ function App(){
     }catch(e){ console.error(e); }
   },[api]);
 
-  const loadGrid = useCallback(async (nextOffset)=>{
+  const loadGrid = useCallback(async (nextOffset, nextFilters)=>{
     const hasOverride = typeof nextOffset === "number" && !Number.isNaN(nextOffset);
     const targetOffset = hasOverride ? Math.max(0, nextOffset) : offset;
     if(hasOverride && nextOffset !== offset){
       skipNextAutoLoad.current = true;
       setOffset(targetOffset);
     }
+    const appliedFilters = nextFilters || filters;
     setLoading(true); setError(null);
     try{
       const params = {
         limit,
         offset: targetOffset,
-        status: filters.status || undefined,
-        fonte_tipo: filters.fonte_tipo || undefined,
-        cfop: filters.cfop || undefined,
-        q: filters.q || undefined,
+        status: appliedFilters.status || undefined,
+        fonte_tipo: appliedFilters.fonte_tipo || undefined,
+        cfop: appliedFilters.cfop || undefined,
+        q: appliedFilters.q || undefined,
         sort_by: sortBy || undefined,
         sort_dir: sortDir || undefined
       };
@@ -615,7 +623,7 @@ function App(){
       setTotal(res.total_filtered || 0);
     }catch(e){ setError(String(e)); setItems([]); setTotal(0); }
     finally{ setLoading(false); }
-  },[api, filters.status, filters.fonte_tipo, filters.cfop, filters.q, sortBy, sortDir, limit, offset, skipNextAutoLoad]);
+  },[api, filters, sortBy, sortDir, limit, offset, skipNextAutoLoad]);
 
   useEffect(()=>{ loadMeta(); },[loadMeta]);
   useEffect(()=>{
@@ -647,6 +655,13 @@ function App(){
       return {...prev, [field]: value};
     });
   },[]);
+
+  const handleClearFilters = useCallback(()=>{
+    const cleared = createDefaultFilters();
+    setOffset(0);
+    setFilters(cleared);
+    loadGrid(0, cleared);
+  },[loadGrid]);
 
   const exportX = async ()=>{
     try{
@@ -915,6 +930,7 @@ function App(){
         onReload:()=> loadGrid(0),
         onExportX: exportX,
         onExportP: exportP,
+        onClearFilters: handleClearFilters,
         loading,
         disabled: jobRunning
       }),
