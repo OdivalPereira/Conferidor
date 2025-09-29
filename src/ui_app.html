@@ -129,9 +129,69 @@ const STATUS_KEY = {
 };
 
 const FILTER_DEFAULTS = Object.freeze({status:"", fonte_tipo:"", cfop:"", q:""});
+const GRID_CACHE_KEY = "conferidor:grid:last-state";
 
 function createDefaultFilters(){
   return {...FILTER_DEFAULTS};
+}
+
+function getSafeLocalStorage(){
+  if(typeof window === "undefined"){ return null; }
+  try{
+    return window.localStorage || null;
+  }catch(err){
+    console.warn("LocalStorage indisponível:", err);
+    return null;
+  }
+}
+
+function normalizeFiltersState(input){
+  const defaults = createDefaultFilters();
+  if(!input || typeof input !== "object"){ return defaults; }
+  const normalized = {...defaults};
+  Object.keys(defaults).forEach(key=>{
+    if(Object.prototype.hasOwnProperty.call(input, key)){
+      const value = input[key];
+      if(typeof value === "string"){ normalized[key] = value; }
+      else if(value == null){ normalized[key] = ""; }
+      else{ normalized[key] = String(value); }
+    }
+  });
+  return normalized;
+}
+
+function loadCachedGridState(){
+  const storage = getSafeLocalStorage();
+  if(!storage){ return null; }
+  try{
+    const raw = storage.getItem(GRID_CACHE_KEY);
+    if(!raw){ return null; }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  }catch(err){
+    console.warn("Falha ao ler cache da grade:", err);
+    return null;
+  }
+}
+
+function saveCachedGridState(state){
+  const storage = getSafeLocalStorage();
+  if(!storage){ return; }
+  try{
+    storage.setItem(GRID_CACHE_KEY, JSON.stringify(state));
+  }catch(err){
+    console.warn("Falha ao salvar cache da grade:", err);
+  }
+}
+
+function clearCachedGridState(){
+  const storage = getSafeLocalStorage();
+  if(!storage){ return; }
+  try{
+    storage.removeItem(GRID_CACHE_KEY);
+  }catch(err){
+    console.warn("Falha ao limpar cache da grade:", err);
+  }
 }
 
 const REQUIRED_UPLOADS = [
@@ -886,17 +946,32 @@ function App(){
       description: description || defaultWarningDescription
     });
   },[addToast, defaultWarningDescription, defaultWarningTitle]);
+  const cachedGridStateRef = useRef(loadCachedGridState());
+  const cachedGridState = cachedGridStateRef.current;
   const [schema,setSchema] = useState(null);
   const [meta,setMeta] = useState(null);
-  const [items,setItems] = useState([]);
-  const [total,setTotal] = useState(0);
+  const [items,setItems] = useState(()=> Array.isArray(cachedGridState?.items) ? cachedGridState.items : []);
+  const [total,setTotal] = useState(()=>{
+    if(typeof cachedGridState?.total === "number"){ return cachedGridState.total; }
+    const numeric = Number(cachedGridState?.total);
+    return Number.isFinite(numeric) ? numeric : 0;
+  });
   const [loading,setLoading] = useState(false);
   const [error,setError] = useState(null);
-  const [filters,setFilters] = useState(()=>createDefaultFilters());
-  const [sortBy,setSortBy] = useState("score");
-  const [sortDir,setSortDir] = useState("desc");
-  const [limit,setLimit] = useState(100);
-  const [offset,setOffset] = useState(0);
+  const [filters,setFilters] = useState(()=> normalizeFiltersState(cachedGridState?.filters));
+  const [sortBy,setSortBy] = useState(()=>{
+    const candidate = typeof cachedGridState?.sortBy === "string" ? cachedGridState.sortBy : null;
+    return candidate && candidate.length ? candidate : "score";
+  });
+  const [sortDir,setSortDir] = useState(()=> cachedGridState?.sortDir === "asc" ? "asc" : "desc");
+  const [limit,setLimit] = useState(()=>{
+    const numeric = Number(cachedGridState?.limit);
+    return Number.isFinite(numeric) && numeric > 0 ? numeric : 100;
+  });
+  const [offset,setOffset] = useState(()=>{
+    const numeric = Number(cachedGridState?.offset);
+    return Number.isFinite(numeric) && numeric >= 0 ? numeric : 0;
+  });
   const [selectedRow,setSelectedRow] = useState(null);
   const [showUploadModal,setShowUploadModal] = useState(false);
   const [uploading,setUploading] = useState(false);
@@ -908,6 +983,28 @@ function App(){
   const normalizedJobStatus = String(jobStatus?.status || "").toLowerCase();
   const jobRunning = Boolean(currentJobId) && JOB_ACTIVE_STATES.has(normalizedJobStatus);
   const skipNextAutoLoad = useRef(false);
+  const offsetResetGuard = useRef(false);
+
+  const persistGridState = useCallback((state)=>{
+    const base = state && typeof state === "object" ? {...state} : {};
+    base.items = Array.isArray(base.items) ? base.items : [];
+    base.total = typeof base.total === "number" ? base.total : Number(base.total) || 0;
+    base.limit = Number(base.limit);
+    if(!Number.isFinite(base.limit) || base.limit <= 0){ base.limit = 100; }
+    base.offset = Number(base.offset);
+    if(!Number.isFinite(base.offset) || base.offset < 0){ base.offset = 0; }
+    base.sortBy = typeof base.sortBy === "string" && base.sortBy ? base.sortBy : "score";
+    base.sortDir = base.sortDir === "asc" ? "asc" : "desc";
+    base.filters = normalizeFiltersState(base.filters);
+    base.timestamp = typeof base.timestamp === "number" ? base.timestamp : Date.now();
+    saveCachedGridState(base);
+    cachedGridStateRef.current = base;
+  },[cachedGridStateRef]);
+
+  const clearGridCacheRef = useCallback(()=>{
+    clearCachedGridState();
+    cachedGridStateRef.current = null;
+  },[cachedGridStateRef]);
 
   const resolveRowId = useCallback((entry)=> entry?.id ?? [entry?.sucessor_idx, entry?.fonte_tipo, entry?.fonte_idx].filter(Boolean).join('-'), []);
 
@@ -969,8 +1066,19 @@ function App(){
         sort_dir: sortDir || undefined
       };
       const res = await api.get("/api/grid",{params});
-      setItems(res.items || []);
-      setTotal(res.total_filtered || 0);
+      const nextItems = Array.isArray(res.items) ? res.items : [];
+      const nextTotal = typeof res.total_filtered === "number" ? res.total_filtered : Number(res.total_filtered) || 0;
+      setItems(nextItems);
+      setTotal(nextTotal);
+      persistGridState({
+        items: nextItems,
+        total: nextTotal,
+        filters: appliedFilters,
+        sortBy,
+        sortDir,
+        limit,
+        offset: targetOffset
+      });
     }catch(e){
       console.error("Falha ao carregar grade", e);
       setError(gridErrorMessage);
@@ -979,7 +1087,7 @@ function App(){
       showErrorToast(gridErrorTitle, e);
     }
     finally{ setLoading(false); }
-  },[api, filters, sortBy, sortDir, limit, offset, skipNextAutoLoad, gridErrorMessage, gridErrorTitle, showErrorToast]);
+  },[api, filters, sortBy, sortDir, limit, offset, skipNextAutoLoad, gridErrorMessage, gridErrorTitle, showErrorToast, persistGridState]);
 
   useEffect(()=>{ loadMeta(); },[loadMeta]);
   useEffect(()=>{
@@ -991,8 +1099,12 @@ function App(){
   },[loadGrid]);
 
   useEffect(()=>{
+    if(!offsetResetGuard.current){
+      offsetResetGuard.current = true;
+      return;
+    }
     setOffset(prev=> prev === 0 ? prev : 0);
-  },[filters, sortBy, sortDir]);
+  },[filters, sortBy, sortDir, offsetResetGuard]);
 
   const handleSortChange = useCallback((nextSortBy, nextSortDir)=>{
     setSortBy(nextSortBy);
@@ -1045,6 +1157,7 @@ function App(){
       setItems([]);
       setTotal(0);
       setSelectedRow(null);
+      clearGridCacheRef();
       addToast({
         type:"success",
         title:clearSuccessTitle,
@@ -1061,7 +1174,7 @@ function App(){
     }finally{
       setClearingData(false);
     }
-  },[addToast, api, clearingData, clearErrorFallback, clearErrorToastTitle, clearSuccessMessage, clearSuccessTitle, confirmClearMessage]);
+  },[addToast, api, clearingData, clearErrorFallback, clearErrorToastTitle, clearSuccessMessage, clearSuccessTitle, confirmClearMessage, clearGridCacheRef]);
 
   const exportJ = async ()=>{
     try{
@@ -1206,23 +1319,39 @@ function App(){
       return;
     }
     let updatedRow = null;
-    setItems(prev=>prev.map(item=>{
-      const key = resolveRowId(item);
-      if(key !== rowKey) return item;
-      const motivos = new Set((item.motivos || "").split(";").filter(Boolean));
-      motivos.add("ajuste_manual");
-      const updated = {
-        ...item,
-        status: targetStatus,
-        "match.status": targetStatus,
-        motivos: Array.from(motivos).join(";"),
-        _manual: true,
-        original_status: item.original_status || originalStatus
-      };
-      updatedRow = updated;
-      return updated;
-    }));
+    let nextItems = null;
+    setItems(prev=>{
+      const mapped = prev.map(item=>{
+        const key = resolveRowId(item);
+        if(key !== rowKey) return item;
+        const motivos = new Set((item.motivos || "").split(";").filter(Boolean));
+        motivos.add("ajuste_manual");
+        const updated = {
+          ...item,
+          status: targetStatus,
+          "match.status": targetStatus,
+          motivos: Array.from(motivos).join(";"),
+          _manual: true,
+          original_status: item.original_status || originalStatus
+        };
+        updatedRow = updated;
+        return updated;
+      });
+      nextItems = mapped;
+      return mapped;
+    });
     if(updatedRow){ setSelectedRow(updatedRow); }
+    if(nextItems){
+      persistGridState({
+        items: nextItems,
+        total,
+        filters,
+        sortBy,
+        sortDir,
+        limit,
+        offset
+      });
+    }
     if(previousStatus){ updateStats(previousStatus, targetStatus); }
   };
 
@@ -1241,23 +1370,39 @@ function App(){
       return;
     }
     let updatedRow = null;
-    setItems(prev=>prev.map(item=>{
-      const key = resolveRowId(item);
-      if(key !== rowKey) return item;
-      const motivos = (item.motivos || "").split(";").filter(Boolean).filter(tag=>tag !== "ajuste_manual");
-      const baseStatus = (item.original_status || item["match.status"] || item.status || originalStatus || "").toUpperCase();
-      const updated = {
-        ...item,
-        status: baseStatus,
-        "match.status": baseStatus,
-        motivos: motivos.join(";"),
-        _manual: false
-      };
-      delete updated.original_status;
-      updatedRow = updated;
-      return updated;
-    }));
+    let nextItems = null;
+    setItems(prev=>{
+      const mapped = prev.map(item=>{
+        const key = resolveRowId(item);
+        if(key !== rowKey) return item;
+        const motivos = (item.motivos || "").split(";").filter(Boolean).filter(tag=>tag !== "ajuste_manual");
+        const baseStatus = (item.original_status || item["match.status"] || item.status || originalStatus || "").toUpperCase();
+        const updated = {
+          ...item,
+          status: baseStatus,
+          "match.status": baseStatus,
+          motivos: motivos.join(";"),
+          _manual: false
+        };
+        delete updated.original_status;
+        updatedRow = updated;
+        return updated;
+      });
+      nextItems = mapped;
+      return mapped;
+    });
     if(updatedRow){ setSelectedRow(updatedRow); }
+    if(nextItems){
+      persistGridState({
+        items: nextItems,
+        total,
+        filters,
+        sortBy,
+        sortDir,
+        limit,
+        offset
+      });
+    }
     if(previousStatus && originalStatus){ updateStats(previousStatus, originalStatus); }
   };
 
