@@ -3,9 +3,10 @@ import json
 import argparse
 import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -32,20 +33,16 @@ def copy_fixture(tmp_dir: Path, name: str, target_name: Optional[str] = None) ->
     return target
 
 
-def prepare_pipeline(tmp_path: Path, *, force_csv: bool = False):
+def run_pipeline_with_inputs(tmp_path: Path, inputs: List[Path], *, force_csv: bool = False):
     dados_dir = tmp_path / "dados"
     staging_dir = tmp_path / "out" / "staging"
     normalized_dir = tmp_path / "out" / "normalized"
     match_dir = tmp_path / "out" / "match"
 
-    inputs = [
-        copy_fixture(dados_dir, "sucessor.csv"),
-        copy_fixture(dados_dir, "suprema_entradas.csv"),
-        copy_fixture(dados_dir, "suprema_saidas.csv"),
-        copy_fixture(dados_dir, "suprema_servicos.csv"),
-        copy_fixture(dados_dir, "fornecedores.csv"),
-        copy_fixture(dados_dir, "plano_contas.csv"),
-    ]
+    for path in inputs:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            raise FileNotFoundError(path)
 
     loader_args = [
         "--inputs",
@@ -137,6 +134,19 @@ def prepare_pipeline(tmp_path: Path, *, force_csv: bool = False):
     return match_dir, tmp_path / "out" / "ui_grid.jsonl", tmp_path / "out" / "ui_meta.json", matcher_inputs
 
 
+def prepare_pipeline(tmp_path: Path, *, force_csv: bool = False):
+    dados_dir = tmp_path / "dados"
+    inputs = [
+        copy_fixture(dados_dir, "sucessor.csv"),
+        copy_fixture(dados_dir, "suprema_entradas.csv"),
+        copy_fixture(dados_dir, "suprema_saidas.csv"),
+        copy_fixture(dados_dir, "suprema_servicos.csv"),
+        copy_fixture(dados_dir, "fornecedores.csv"),
+        copy_fixture(dados_dir, "plano_contas.csv"),
+    ]
+    return run_pipeline_with_inputs(tmp_path, inputs, force_csv=force_csv)
+
+
 def test_full_pipeline(tmp_path):
     match_dir, grid_jsonl, meta_json, _ = prepare_pipeline(tmp_path)
 
@@ -179,6 +189,111 @@ def test_pipeline_uses_csv_when_parquet_missing(tmp_path):
 
     grid_csv = match_dir / "reconc_grid.csv"
     assert grid_csv.exists()
+
+
+def test_pipeline_handles_messy_inputs(tmp_path):
+    dados_dir = tmp_path / "dados"
+
+    sucessor_df = pd.DataFrame(
+        [
+            {
+                "Transação": "1",
+                "Débito": "1.1.1",
+                "Crédito": "2.2.2",
+                "Nº Docto": "NF 123",
+                "Valor": "R$ 1.234,56",
+                "Hist": "Venda mês janeiro",
+                "Participante D": "João Comércio Ltda",
+                "Participante C": "",
+                "Data": "15-01-2024",
+            }
+        ]
+    )
+    entradas_df = pd.DataFrame(
+        [
+            {
+                "Data Emissão": "2024/01/15",
+                "Documento": "NF 123",
+                "Nome Fornecedor": "  Joao  Comercio LTDA  ",
+                "Valor Contábil": "1 234,56",
+                "CFOP": "5102",
+                "Modelo": "55",
+                "Situação do Documento": "Autorizado",
+                "Chave NF-e/CT-e/NFC-e/BP-e": "",
+            }
+        ]
+    )
+    saidas_df = pd.DataFrame(
+        [
+            {
+                "Data Emissão": "15/01/2024",
+                "Documento": "900001",
+                "Nome Cliente": "Cliente Exemplo",
+                "Valor Contábil": "0,00",
+                "CFOP": "6108",
+                "Modelo": "55",
+                "Situação do Documento": "Cancelado",
+            }
+        ]
+    )
+    servicos_df = pd.DataFrame(
+        [
+            {
+                "Data Emissão": "2024-01-15",
+                "Nr. Doc.": "S-01",
+                "Cliente": "Cliente Serviço",
+                "Valor Contábil": "100,00",
+                "Nat. Operação": "Serviço",
+                "Situação": "Normal",
+            }
+        ]
+    )
+
+    def _write(df: pd.DataFrame, path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(path, sep=";", index=False, encoding="latin1")
+        return path
+
+    sucessor_path = _write(sucessor_df, dados_dir / "sucessor.csv")
+    entradas_path = _write(entradas_df, dados_dir / "suprema_entradas.csv")
+    saidas_path = _write(saidas_df, dados_dir / "suprema_saidas.csv")
+    servicos_path = _write(servicos_df, dados_dir / "suprema_servicos.csv")
+    fornecedores_path = copy_fixture(dados_dir, "fornecedores.csv")
+    plano_contas_path = copy_fixture(dados_dir, "plano_contas.csv")
+
+    match_dir, _, _, _ = run_pipeline_with_inputs(
+        tmp_path,
+        [
+            sucessor_path,
+            entradas_path,
+            saidas_path,
+            servicos_path,
+            fornecedores_path,
+            plano_contas_path,
+        ],
+    )
+
+    normalized_dir = tmp_path / "out" / "normalized"
+    sucessor_normalized = pd.read_csv(normalized_dir / "sucessor.csv")
+    entradas_normalized = pd.read_csv(normalized_dir / "entradas.csv")
+
+    assert sucessor_normalized.loc[0, "valor"] == pytest.approx(1234.56, rel=1e-5)
+    assert entradas_normalized.loc[0, "valor"] == pytest.approx(1234.56, rel=1e-5)
+
+    assert sucessor_normalized.loc[0, "data_iso"] == "2024-01-15"
+    assert entradas_normalized.loc[0, "data_iso"] == "2024-01-15"
+
+    assert sucessor_normalized.loc[0, "participante_key"] == "JOAO COMERCIO LTDA"
+    assert entradas_normalized.loc[0, "participante_key"] == "JOAO COMERCIO LTDA"
+
+    grid_df = pd.read_csv(match_dir / "reconc_grid.csv")
+    target_rows = grid_df.loc[grid_df["S.doc_num"].astype(str) == "123"]
+    assert not target_rows.empty
+    assert (target_rows["match.status"].str.upper() == "OK").all()
+    assert (target_rows["F.participante"].str.strip() == "Joao Comercio LTDA").all()
+    assert target_rows["match.score"].astype(float).ge(70).all()
+    assert target_rows["delta.valor"].astype(float).abs().le(0.01).all()
+    assert target_rows["delta.dias"].astype(float).abs().le(0.0).all()
 
 
 def test_exports(tmp_path):
