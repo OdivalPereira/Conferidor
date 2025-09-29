@@ -24,6 +24,11 @@ except Exception:  # pragma: no cover
     run_export_xlsx = None
 
 try:
+    from export_json import run as run_export_json  # type: ignore
+except Exception:  # pragma: no cover
+    run_export_json = None
+
+try:
     from export_pdf import run as run_export_pdf  # type: ignore
 except Exception:  # pragma: no cover
     run_export_pdf = None
@@ -1000,6 +1005,50 @@ async def api_process(
     )
     response.headers["Location"] = f"/api/jobs/{job_id}"
     return response
+
+
+@app.post("/api/export/json")
+def api_export_json(payload: Dict[str, object]):
+    if run_export_json is None:
+        raise HTTPException(500, detail="export_json is not available in this runtime")
+
+    grid = _resolve_data_path(_coerce_path(payload.get("grid")), "match/reconc_grid.csv")
+    out = _resolve_data_path(_coerce_path(payload.get("out")), "match/reconc_grid.json")
+
+    indent_value = payload.get("indent")
+    indent = 2
+    if indent_value not in (None, ""):
+        try:
+            indent = int(indent_value)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, detail="indent must be an integer") from exc
+        if indent < 0:
+            indent = 0
+
+    ensure_ascii_value = payload.get("ensure_ascii")
+    ensure_ascii = False
+    if ensure_ascii_value not in (None, ""):
+        if isinstance(ensure_ascii_value, bool):
+            ensure_ascii = ensure_ascii_value
+        elif isinstance(ensure_ascii_value, (int, float)):
+            ensure_ascii = bool(ensure_ascii_value)
+        else:
+            ensure_ascii = str(ensure_ascii_value).strip().lower() in {"1", "true", "yes", "sim", "on"}
+
+    result = run_export_json(
+        grid_csv=str(grid),
+        out_path=str(out),
+        indent=indent,
+        ensure_ascii=ensure_ascii,
+    )
+
+    out_path = Path(str(result.get("out", out))).resolve()
+    download = _relative_download(out_path)
+    if download:
+        result["download"] = download
+    else:
+        result["absolute_out"] = str(out_path)
+    return result
 
 
 @app.post("/api/export/xlsx")

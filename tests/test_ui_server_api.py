@@ -1,6 +1,7 @@
 import importlib
 import json
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -121,3 +122,24 @@ def test_ui_app_endpoint_serves_html(reload_ui_server):
     app_response = module.ui_app()
     assert app_response.status_code == 200
     assert 'id="root"' in app_response.body.decode("utf-8")
+
+
+def test_api_export_json_creates_file(reload_ui_server):
+    module, data_dir = reload_ui_server
+
+    match_dir = data_dir / "match"
+    match_dir.mkdir()
+    grid_csv = match_dir / "reconc_grid.csv"
+    grid_csv.write_text("id,status\n1,OK\n", encoding="utf-8")
+
+    result = module.api_export_json({"grid": str(grid_csv)})
+
+    exported_path = Path(result["out"]).resolve()
+    assert exported_path.exists()
+    assert result.get("rows") == 1
+    assert result.get("columns") == ["id", "status"]
+    assert result.get("download")
+
+    payload = json.loads(exported_path.read_text(encoding="utf-8"))
+    assert isinstance(payload, list)
+    assert payload[0]["id"] == "1"

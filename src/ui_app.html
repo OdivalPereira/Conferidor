@@ -521,7 +521,7 @@ function UploadModal({open,onClose,onConfirm,submitting,error}){
   );
 }
 
-function Toolbar({stats,filters,onStatusFilter,onFilterChange,onReload,onExportX,onExportP,onClearFilters,onClearData,clearing,loading,disabled}){
+function Toolbar({stats,filters,onStatusFilter,onFilterChange,onReload,onExportJson,onExportX,onExportP,onClearFilters,onClearData,clearing,loading,disabled}){
   const statusValue = (filters?.status || "");
   const statusCards = [
     {key:"TOTAL",label:"Total",valueKey:"TOTAL",statusValue:"",valueClass:"text-xl font-bold"},
@@ -570,6 +570,7 @@ function Toolbar({stats,filters,onStatusFilter,onFilterChange,onReload,onExportX
         ),
         React.createElement("div",{className:"flex gap-2"},
           React.createElement("button",{onClick:onClearFilters,disabled:disabled,className:"px-3 py-2 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"}, "Limpar filtros"),
+          React.createElement("button",{onClick:onExportJson,disabled:disabled,className:"px-3 py-2 rounded-lg bg-amber-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"}, "Exportar JSON"),
           React.createElement("button",{onClick:onExportX,disabled:disabled,className:"px-3 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"}, "Exportar Excel"),
           React.createElement("button",{onClick:onExportP,disabled:disabled,className:"px-3 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"}, "Exportar PDF"),
           React.createElement("button",{onClick:onClearData,disabled:disabled||clearing,className:"px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-50 disabled:cursor-not-allowed"}, clearing?"Limpando...":"Limpar dados"),
@@ -885,6 +886,14 @@ function App(){
     }
   },[addToast, api, clearingData]);
 
+  const exportJ = async ()=>{
+    try{
+      const out = "reconc_grid.json";
+      const res = await api.post("/api/export/json",{body:{grid:"reconc_grid.csv",out}});
+      const link = res.download || res.absolute_out;
+      if(link){ window.open(link,"_blank"); }
+    }catch(e){ alert("Falha no export JSON: "+e); }
+  };
   const exportX = async ()=>{
     try{
       const out = "relatorio_conferencia.xlsx";
@@ -1152,6 +1161,7 @@ function App(){
         onStatusFilter: handleStatusFilter,
         onFilterChange: handleFilterChange,
         onReload:()=> loadGrid(0),
+        onExportJson: exportJ,
         onExportX: exportX,
         onExportP: exportP,
         onClearFilters: handleClearFilters,
