@@ -1,0 +1,191 @@
+{
+  "common": {
+    "close": "Fechar",
+    "cancel": "Cancelar",
+    "loading": "Carregando..."
+  },
+  "upload": {
+    "title": "Enviar CSVs",
+    "subtitle": "Selecione os arquivos CSV necessários para iniciar o processamento.",
+    "validation": {
+      "selectFile": "Selecione o arquivo de {label}."
+    },
+    "actions": {
+      "submitting": "Enviando...",
+      "submit": "Enviar e processar"
+    },
+    "fields": {
+      "sucessor": {
+        "label": "Sucessor (contábil)",
+        "hint": "Ex: sucessor.csv"
+      },
+      "entradas": {
+        "label": "Suprema Entradas",
+        "hint": "Ex: suprema_entradas.csv"
+      },
+      "saidas": {
+        "label": "Suprema Saídas",
+        "hint": "Ex: suprema_saidas.csv"
+      },
+      "servicos": {
+        "label": "Suprema Serviços",
+        "hint": "Ex: suprema_servicos.csv"
+      },
+      "fornecedores": {
+        "label": "Fornecedores",
+        "hint": "Ex: fornecedores.csv"
+      },
+      "plano": {
+        "label": "Plano de Contas",
+        "hint": "Ex: plano_contas.csv"
+      }
+    }
+  },
+  "job": {
+    "progress": {
+      "title": "Processamento em andamento (job {jobId})",
+      "status": "Status: {status}",
+      "downloadLogs": "Baixar logs",
+      "cancelRequested": "Cancelamento solicitado",
+      "canceling": "Cancelando...",
+      "cancel": "Cancelar",
+      "progress": "Progresso",
+      "logSize": "Log: {size} KB",
+      "cancelNotice": "Cancelamento em andamento — aguarde a finalização."
+    }
+  },
+  "toolbar": {
+    "cards": {
+      "total": "Total",
+      "ok": "OK",
+      "alert": "Alertas",
+      "divergence": "Divergências",
+      "noSource": "Sem Fonte",
+      "noSuccessor": "Sem Sucessor"
+    },
+    "filters": {
+      "statusAll": "Status — todos",
+      "sourceAll": "Fonte — todas",
+      "cfop": "CFOP",
+      "search": "Buscar (histórico, doc, tags)..."
+    },
+    "actions": {
+      "refresh": "Atualizar",
+      "clearFilters": "Limpar filtros",
+      "exportJson": "Exportar JSON",
+      "exportExcel": "Exportar Excel",
+      "exportPdf": "Exportar PDF",
+      "clearing": "Limpando...",
+      "clearData": "Limpar dados",
+      "files": "Arquivos"
+    }
+  },
+  "inspector": {
+    "title": "Detalhes da seleção",
+    "fields": {
+      "currentStatus": "Status atual",
+      "strategy": "Estratégia",
+      "score": "Score",
+      "sucessor": "Sucessor",
+      "source": "Fonte",
+      "deltaValue": "Delta Valor",
+      "deltaDays": "Delta Dias",
+      "reasons": "Motivos"
+    },
+    "actions": {
+      "markOk": "Marcar OK",
+      "markDivergence": "Marcar Divergência",
+      "reset": "Reverter"
+    }
+  },
+  "table": {
+    "headers": {
+      "status": "Status",
+      "actions": "Ações"
+    },
+    "actions": {
+      "markOk": "Marcar OK",
+      "markDivergence": "Marcar Divergência",
+      "reset": "Reverter"
+    },
+    "loading": {
+      "title": "Carregando dados...",
+      "description": "Estamos preparando a grade para exibição."
+    },
+    "empty": {
+      "title": "Nenhum registro encontrado.",
+      "description": "Ajuste os filtros ou processe novos dados."
+    },
+    "columns": {
+      "strategy": "Regra",
+      "score": "Score",
+      "sData": "Data (S)",
+      "sDebito": "Débito",
+      "sCredito": "Crédito",
+      "sDoc": "Nº Docto (S)",
+      "sValor": "Valor (S)",
+      "fDoc": "Nº Docto (F)",
+      "fValor": "Valor (F)",
+      "cfop": "CFOP",
+      "deltaValor": "Delta Valor",
+      "deltaDias": "Delta Dias",
+      "motivos": "Motivos"
+    }
+  },
+  "paginator": {
+    "summary": "Mostrando {start}-{end} de {total}",
+    "page": "Página {page}/{pages}",
+    "previous": "Anterior",
+    "next": "Próximo"
+  },
+  "toast": {
+    "defaults": {
+      "errorTitle": "Erro",
+      "errorDescription": "Ocorreu um erro inesperado.",
+      "warningTitle": "Aviso",
+      "warningDescription": "Verifique as informações exibidas."
+    }
+  },
+  "app": {
+    "notifications": {
+      "metaError": "Erro ao carregar metadados",
+      "gridError": "Erro ao carregar dados",
+      "gridErrorMessage": "Não foi possível carregar os dados da grade. Tente novamente.",
+      "clearSuccessTitle": "Dados limpos",
+      "clearSuccessMessage": "Os dados processados foram removidos.",
+      "clearErrorTitle": "Erro",
+      "clearErrorToastTitle": "Erro ao limpar dados",
+      "clearErrorFallback": "Não foi possível limpar os dados processados.",
+      "processingFailedTitle": "Processamento falhou",
+      "processingFailedMessage": "O processamento foi interrompido.",
+      "processingCancelledTitle": "Processamento cancelado",
+      "processingCancelledMessage": "O processamento foi interrompido antes da conclusão.",
+      "cancelProcessError": "Não foi possível cancelar o processamento",
+      "exportJsonError": "Erro ao exportar JSON",
+      "exportXlsxError": "Erro ao exportar XLSX",
+      "exportPdfError": "Erro ao exportar PDF",
+      "processStartError": "Erro ao iniciar processamento",
+      "uploadError": "Erro no envio de arquivos",
+      "manualSaveError": "Falha ao salvar ajuste manual",
+      "manualRemoveError": "Falha ao remover ajuste manual"
+    },
+    "confirm": {
+      "clearData": "Tem certeza que deseja limpar os dados processados? Esta ação não pode ser desfeita."
+    },
+    "empty": {
+      "filtered": "Nenhum registro encontrado para os filtros selecionados.",
+      "default": "Nenhum dado disponível no momento.",
+      "filteredHint": "Ajuste os filtros ou limpe os campos para visualizar outros resultados.",
+      "defaultHint": "Envie novos arquivos para gerar a grade de conferência."
+    },
+    "header": {
+      "title": "App de Conferência - UI",
+      "subtitle": "Carrega {file} do servidor local e exibe a grade com filtros e exports.",
+      "subtitleFile": "ui_grid.jsonl"
+    },
+    "actions": {
+      "processing": "Processando...",
+      "process": "Processar"
+    }
+  }
+}
