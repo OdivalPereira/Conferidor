@@ -55,6 +55,19 @@ _SUPPORTED_OPERATORS = {
     "endswith",
 }
 
+def _listify(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        out: List[str] = []
+        for item in value:
+            if isinstance(item, str):
+                out.append(item)
+        return out
+    return []
+
 
 def _validate_condition_list(conditions: Any, *, prefix: str, errors: List[str]) -> None:
     if conditions is None:
@@ -73,7 +86,71 @@ def _validate_condition_list(conditions: Any, *, prefix: str, errors: List[str])
         if not op or not isinstance(op, str):
             errors.append(f"{prefix}[{idx}].op deve ser uma string não vazia.")
         elif op not in _SUPPORTED_OPERATORS:
-            errors.append(f"{prefix}[{idx}].op='{op}' não é suportado pelo issues_engine.")
+                errors.append(f"{prefix}[{idx}].op='{op}' não é suportado pelo issues_engine.")
+
+
+def _validate_condition_block(
+    block: Any,
+    *,
+    prefix: str,
+    errors: List[str],
+    condition_defs: Optional[Dict[str, Any]] = None,
+) -> None:
+    if block is None:
+        return
+    if not isinstance(block, dict):
+        errors.append(f"{prefix} deve ser um objeto (dict).")
+        return
+
+    use_val = block.get("use")
+    if use_val is not None and not isinstance(use_val, (list, tuple, str)):
+        errors.append(f"{prefix}.use deve ser string ou lista de strings.")
+    refs = _listify(use_val)
+    if refs and condition_defs is None:
+        errors.append(f"{prefix}.use informado mas nenhuma definitions.conditions foi declarada.")
+    elif condition_defs is not None:
+        for ref in refs:
+            if ref not in condition_defs:
+                errors.append(f"{prefix}.use faz referência desconhecida a '{ref}'.")
+
+    _validate_condition_list(block.get("all"), prefix=f"{prefix}.all", errors=errors)
+    _validate_condition_list(block.get("any"), prefix=f"{prefix}.any", errors=errors)
+
+
+def _validate_emit_block(
+    emit: Any,
+    *,
+    prefix: str,
+    errors: List[str],
+    action_defs: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not isinstance(emit, dict):
+        errors.append(f"{prefix} deve ser um objeto (dict).")
+        return
+
+    use_val = emit.get("use")
+    if use_val is not None and not isinstance(use_val, (list, tuple, str)):
+        errors.append(f"{prefix}.use deve ser string ou lista de strings.")
+    refs = _listify(use_val)
+    if refs and action_defs is None:
+        errors.append(f"{prefix}.use informado mas nenhuma definitions.actions foi declarada.")
+    elif action_defs is not None:
+        for ref in refs:
+            if ref not in action_defs:
+                errors.append(f"{prefix}.use faz referência desconhecida a '{ref}'.")
+
+    message = emit.get("message")
+    if message is not None and not isinstance(message, str):
+        errors.append(f"{prefix}.message deve ser string se fornecida.")
+    mark_status = emit.get("mark_status")
+    if mark_status is not None and not isinstance(mark_status, str):
+        errors.append(f"{prefix}.mark_status deve ser string se fornecida.")
+    code = emit.get("code")
+    if code is not None and not isinstance(code, str):
+        errors.append(f"{prefix}.code deve ser string se fornecida.")
+    severity = emit.get("severity")
+    if severity is not None and not isinstance(severity, str):
+        errors.append(f"{prefix}.severity deve ser string se fornecida.")
 
 
 def validate_rules_document(doc: Any, *, source: Optional[str | os.PathLike[str]] = None) -> None:
@@ -86,6 +163,37 @@ def validate_rules_document(doc: Any, *, source: Optional[str | os.PathLike[str]
     defaults = doc.get("defaults")
     if defaults is not None and not isinstance(defaults, dict):
         errors.append("defaults deve ser um objeto mapeável (dict).")
+
+    definitions = doc.get("definitions") or {}
+    if definitions and not isinstance(definitions, dict):
+        errors.append("definitions deve ser um objeto mapeável (dict).")
+
+    cond_defs = definitions.get("conditions") if isinstance(definitions, dict) else None
+    if cond_defs is not None and not isinstance(cond_defs, dict):
+        errors.append("definitions.conditions deve ser um objeto (dict).")
+    elif isinstance(cond_defs, dict):
+        for name, block in cond_defs.items():
+            _validate_condition_block(
+                block,
+                prefix=f"definitions.conditions['{name}']",
+                errors=errors,
+                condition_defs=cond_defs,
+            )
+
+    action_defs = definitions.get("actions") if isinstance(definitions, dict) else None
+    if action_defs is not None and not isinstance(action_defs, dict):
+        errors.append("definitions.actions deve ser um objeto (dict).")
+    elif isinstance(action_defs, dict):
+        for name, block in action_defs.items():
+            if not isinstance(block, dict):
+                errors.append(f"definitions.actions['{name}'] deve ser um objeto (dict).")
+                continue
+            _validate_emit_block(
+                block,
+                prefix=f"definitions.actions['{name}']",
+                errors=errors,
+                action_defs=action_defs,
+            )
 
     rules = doc.get("rules")
     if not isinstance(rules, list) or not rules:
@@ -101,28 +209,21 @@ def validate_rules_document(doc: Any, *, source: Optional[str | os.PathLike[str]
                 errors.append(f"rules[{idx}].id deve ser uma string não vazia.")
 
             emit = rule.get("emit")
-            if not isinstance(emit, dict):
-                errors.append(f"rules[{idx}].emit deve ser um objeto (dict).")
-            else:
-                message = emit.get("message")
-                if message is not None and not isinstance(message, str):
-                    errors.append(f"rules[{idx}].emit.message deve ser string se fornecida.")
-                mark_status = emit.get("mark_status")
-                if mark_status is not None and not isinstance(mark_status, str):
-                    errors.append(f"rules[{idx}].emit.mark_status deve ser string se fornecida.")
-                code = emit.get("code")
-                if code is not None and not isinstance(code, str):
-                    errors.append(f"rules[{idx}].emit.code deve ser string se fornecida.")
+            _validate_emit_block(
+                emit,
+                prefix=f"rules[{idx}].emit",
+                errors=errors,
+                action_defs=action_defs if isinstance(action_defs, dict) else None,
+            )
 
             for section_name in ("when", "and", "but"):
                 section = rule.get(section_name)
-                if section is None:
-                    continue
-                if not isinstance(section, dict):
-                    errors.append(f"rules[{idx}].{section_name} deve ser um objeto (dict).")
-                    continue
-                _validate_condition_list(section.get("all"), prefix=f"rules[{idx}].{section_name}.all", errors=errors)
-                _validate_condition_list(section.get("any"), prefix=f"rules[{idx}].{section_name}.any", errors=errors)
+                _validate_condition_block(
+                    section,
+                    prefix=f"rules[{idx}].{section_name}",
+                    errors=errors,
+                    condition_defs=cond_defs if isinstance(cond_defs, dict) else None,
+                )
 
     if errors:
         raise ValueError(f"Regras inválidas{label}: " + "; ".join(errors))
@@ -131,6 +232,130 @@ def validate_rules_document(doc: Any, *, source: Optional[str | os.PathLike[str]
 def validate_rules_file(path: str | os.PathLike[str]) -> Dict[str, Any]:
     doc = load_rules(path)
     validate_rules_document(doc, source=path)
+    return doc
+
+
+def _merge_condition_blocks(*blocks: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
+    result_all: List[Dict[str, Any]] = []
+    result_any: List[Dict[str, Any]] = []
+    for block in blocks:
+        for cond in (block.get("all") or []):
+            result_all.append(dict(cond))
+        for cond in (block.get("any") or []):
+            result_any.append(dict(cond))
+    merged: Dict[str, List[Dict[str, Any]]] = {}
+    if result_all:
+        merged["all"] = result_all
+    if result_any:
+        merged["any"] = result_any
+    return merged
+
+
+def _prepare_condition_resolver(condition_defs: Dict[str, Any]):
+    cache: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+
+    def expand(name: str, stack: Tuple[str, ...]) -> Dict[str, List[Dict[str, Any]]]:
+        if name in cache:
+            return cache[name]
+        if name in stack:
+            cycle = " -> ".join(stack + (name,))
+            raise ValueError(f"Referência cíclica em definitions.conditions: {cycle}")
+        block = condition_defs.get(name)
+        if block is None:
+            raise ValueError(f"Condição referenciada não encontrada: {name}")
+        merged = resolve_with_stack(block, stack + (name,))
+        cache[name] = merged
+        return merged
+
+    def resolve_with_stack(block: Dict[str, Any], stack: Tuple[str, ...]) -> Dict[str, List[Dict[str, Any]]]:
+        merged_blocks: List[Dict[str, List[Dict[str, Any]]]] = []
+        for ref in _listify(block.get("use")):
+            merged_blocks.append(expand(ref, stack))
+        direct_block: Dict[str, List[Dict[str, Any]]] = {}
+        if block.get("all"):
+            direct_block["all"] = [dict(c) for c in block.get("all", [])]
+        if block.get("any"):
+            direct_block["any"] = [dict(c) for c in block.get("any", [])]
+        merged_blocks.append(direct_block)
+        return _merge_condition_blocks(*merged_blocks)
+
+    def resolve_block(block: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+        return resolve_with_stack(block, tuple())
+
+    return resolve_block
+
+
+def _prepare_action_resolver(action_defs: Dict[str, Dict[str, Any]]):
+    cache: Dict[str, Dict[str, Any]] = {}
+
+    def expand(name: str, stack: Tuple[str, ...]) -> Dict[str, Any]:
+        if name in cache:
+            return cache[name]
+        if name in stack:
+            cycle = " -> ".join(stack + (name,))
+            raise ValueError(f"Referência cíclica em definitions.actions: {cycle}")
+        block = action_defs.get(name)
+        if block is None:
+            raise ValueError(f"Ação referenciada não encontrada: {name}")
+        resolved = resolve_with_stack(block, stack + (name,))
+        cache[name] = resolved
+        return resolved
+
+    def resolve_with_stack(block: Dict[str, Any], stack: Tuple[str, ...]) -> Dict[str, Any]:
+        resolved: Dict[str, Any] = {}
+        for ref in _listify(block.get("use")):
+            resolved.update(expand(ref, stack))
+        for key, value in block.items():
+            if key == "use":
+                continue
+            resolved[key] = value
+        return dict(resolved)
+
+    def resolve_block(block: Dict[str, Any]) -> Dict[str, Any]:
+        return resolve_with_stack(block, tuple())
+
+    return resolve_block
+
+
+def prepare_rules_document(doc: Dict[str, Any]) -> Dict[str, Any]:
+    definitions = doc.get("definitions") or {}
+    condition_defs: Dict[str, Any] = definitions.get("conditions") or {}
+    action_defs: Dict[str, Dict[str, Any]] = definitions.get("actions") or {}
+
+    condition_resolver = _prepare_condition_resolver(condition_defs)
+    action_resolver = _prepare_action_resolver(action_defs)
+
+    prepared_rules: List[Dict[str, Any]] = []
+    for rule in doc.get("rules", []):
+        new_rule = dict(rule)
+        for section_name in ("when", "and", "but"):
+            block = rule.get(section_name)
+            if not block:
+                new_rule.pop(section_name, None)
+                continue
+            if condition_defs:
+                resolved = condition_resolver(block)
+            else:
+                resolved = _merge_condition_blocks(
+                    {"all": block.get("all", []), "any": block.get("any", [])}
+                )
+            if resolved:
+                new_rule[section_name] = resolved
+            else:
+                new_rule.pop(section_name, None)
+
+        emit_block = rule.get("emit") or {}
+        if action_defs:
+            resolved_emit = action_resolver(emit_block)
+        else:
+            resolved_emit = dict(emit_block)
+        resolved_emit.pop("use", None)
+        new_rule["emit"] = resolved_emit
+
+        prepared_rules.append(new_rule)
+
+    doc = dict(doc)
+    doc["rules"] = prepared_rules
     return doc
 
 # ====== Loader da grid (CSV/JSONL) ======
@@ -300,6 +525,7 @@ def merge_status(curr: Optional[str], new: Optional[str]) -> Optional[str]:
 # ====== Motor principal ======
 def run_issues(grid_path: str, rules_path: str, out_issues: str, out_grid: str) -> Dict[str, Any]:
     rules_doc = validate_rules_file(rules_path)
+    rules_doc = prepare_rules_document(rules_doc)
     rules = rules_doc.get("rules") or []
     defaults = rules_doc.get("defaults") or {}
     grid = read_grid(grid_path)

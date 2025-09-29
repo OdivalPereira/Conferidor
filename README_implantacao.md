@@ -106,6 +106,39 @@ python src/issues_engine.py   --grid out/match/reconc_grid.csv   --rules cfg/iss
 ```
 Resultado: a grid anotada já pode ajustar `status` (ALERTA/DIVERGÊNCIA) conforme regras.
 
+#### DSL das regras (`cfg/issues_rules.yml`)
+- Cada regra possui blocos opcionais `when`, `and` e `but`. Dentro de cada bloco use `all` (AND) e `any` (OR) com objetos `{field, op, value}`.
+- Os operadores suportados são `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, `abs_gt`, `abs_gte`, `in`, `not_in`, `regex`, `startswith`, `endswith` e `exists`.
+- Use `definitions.conditions` para declarar grupos reutilizáveis de condições e `definitions.actions` para templates de emissão.
+- Referencie uma definição com `use: nome_da_definicao`; é possível combinar múltiplas referências (`use: [base_a, base_b]`) e ainda declarar condições adicionais no mesmo bloco.
+- Em `emit`, o template reutilizado pode fornecer `mark_status`, `code`, `message`, `suggest` etc.; qualquer campo declarado diretamente na regra sobrescreve o herdado.
+- Placeholders como `{F.doc}` ou `{F.doc or S.doc}` são substituídos pelos valores da linha avaliada.
+
+Exemplo resumido:
+
+```yaml
+definitions:
+  conditions:
+    tem_contraparte:
+      all:
+        - { field: "status", op: "ne", value: "SEM_FONTE" }
+        - { field: "status", op: "ne", value: "SEM_SUCESSOR" }
+  actions:
+    marcar_alerta:
+      mark_status: "ALERTA"
+
+rules:
+  - id: R002
+    when:
+      use: tem_contraparte
+      all:
+        - { field: "delta.dias", op: "gt", value: 3 }
+    emit:
+      use: marcar_alerta
+      code: "DATA_FORA_JANELA"
+      message: "Diferença de {delta.dias} dias excede a janela padrão."
+```
+
 ### 4.4 Dataset para UI
 ```bash
 python src/ui_dataset_builder.py   --grid out/match/reconc_grid_issues.csv   --meta out/ui_meta.json   --schema cfg/ui_schema.json   --out-jsonl out/ui_grid.jsonl
