@@ -186,20 +186,22 @@ def _read_json(path: Path) -> Dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _read_jsonl(path: Path) -> List[Dict[str, object]]:
+def _iter_jsonl(path: Path) -> Iterator[Dict[str, object]]:
     if not path.exists():
         raise HTTPException(404, detail=f"File not found: {path}")
-    rows: List[Dict[str, object]] = []
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
             if not line:
                 continue
             try:
-                rows.append(json.loads(line))
+                yield json.loads(line)
             except json.JSONDecodeError:
                 continue
-    return rows
+
+
+def _read_jsonl(path: Path) -> List[Dict[str, object]]:
+    return list(_iter_jsonl(path))
 
 
 def _append_manual_override_record(record: Dict[str, object]) -> None:
@@ -298,47 +300,38 @@ def _apply_manual_override_to_row(
     return updated
 
 
+def _apply_manual_override_row(
+    row: Dict[str, object], overrides: Dict[str, Dict[str, object]]
+) -> Dict[str, object]:
+    row_id = _infer_row_id_from_row(row)
+    override = overrides.get(row_id) if row_id else None
+    if override:
+        return _apply_manual_override_to_row(row, override)
+    cleaned_row = dict(row)
+    original_status = cleaned_row.get("original_status")
+    if original_status:
+        cleaned_row["status"] = str(original_status).upper()
+        cleaned_row["match.status"] = str(original_status).upper()
+    motivos_raw = cleaned_row.get("motivos") or cleaned_row.get("match.motivos")
+    if motivos_raw:
+        motivos = [part for part in str(motivos_raw).split(";") if part and part != MANUAL_OVERRIDE_TAG]
+        cleaned_row["motivos"] = ";".join(motivos)
+    cleaned_row.pop("_manual", None)
+    cleaned_row.pop("original_status", None)
+    return cleaned_row
+
+
 def _apply_manual_overrides(
     rows: List[Dict[str, object]], overrides: Optional[Dict[str, Dict[str, object]]] = None
 ) -> List[Dict[str, object]]:
     if not rows:
         return rows
-    overrides = overrides or _load_manual_overrides()
-    if not overrides:
-        cleaned: List[Dict[str, object]] = []
-        for row in rows:
-            cleaned_row = dict(row)
-            original_status = cleaned_row.get("original_status")
-            if original_status:
-                cleaned_row["status"] = str(original_status).upper()
-                cleaned_row["match.status"] = str(original_status).upper()
-            motivos_raw = cleaned_row.get("motivos") or cleaned_row.get("match.motivos")
-            if motivos_raw:
-                motivos = [part for part in str(motivos_raw).split(";") if part and part != MANUAL_OVERRIDE_TAG]
-                cleaned_row["motivos"] = ";".join(motivos)
-            cleaned_row.pop("_manual", None)
-            cleaned_row.pop("original_status", None)
-            cleaned.append(cleaned_row)
-        return cleaned
+    overrides_map = overrides or _load_manual_overrides()
+    if not overrides_map:
+        overrides_map = {}
     applied: List[Dict[str, object]] = []
     for row in rows:
-        row_id = _infer_row_id_from_row(row)
-        override = overrides.get(row_id) if row_id else None
-        if override:
-            applied.append(_apply_manual_override_to_row(row, override))
-        else:
-            cleaned_row = dict(row)
-            original_status = cleaned_row.get("original_status")
-            if original_status:
-                cleaned_row["status"] = str(original_status).upper()
-                cleaned_row["match.status"] = str(original_status).upper()
-            motivos_raw = cleaned_row.get("motivos") or cleaned_row.get("match.motivos")
-            if motivos_raw:
-                motivos = [part for part in str(motivos_raw).split(";") if part and part != MANUAL_OVERRIDE_TAG]
-                cleaned_row["motivos"] = ";".join(motivos)
-            cleaned_row.pop("_manual", None)
-            cleaned_row.pop("original_status", None)
-            applied.append(cleaned_row)
+        applied.append(_apply_manual_override_row(row, overrides_map))
     return applied
 
 
@@ -726,8 +719,7 @@ def api_grid(
     sort_dir: str = Query("desc", regex="^(asc|desc)$"),
 ) -> Dict[str, object]:
     grid_path = DATA_DIR / "ui_grid.jsonl"
-    rows = _read_jsonl(grid_path)
-    rows = _apply_manual_overrides(rows)
+    overrides = _load_manual_overrides()
 
     def row_match(row: Dict[str, object]) -> bool:
         if status and str(row.get("status") or "").upper() != status.upper():
@@ -745,19 +737,39 @@ def api_grid(
                 return False
         return True
 
-    filtered = [row for row in rows if row_match(row)]
+    total = 0
+    total_filtered = 0
+    paginated: List[Dict[str, object]] = []
+    needs_sorting = bool(sort_by)
+    filtered_rows: List[Dict[str, object]] = []
 
-    if sort_by:
+    for raw_row in _iter_jsonl(grid_path):
+        total += 1
+        row = _apply_manual_override_row(raw_row, overrides)
+        if not row_match(row):
+            continue
+        total_filtered += 1
+        if needs_sorting:
+            filtered_rows.append(row)
+            continue
+        if total_filtered <= offset:
+            continue
+        if len(paginated) < limit:
+            paginated.append(row)
+
+    if needs_sorting:
+        assert sort_by is not None
         reverse = sort_dir.lower() != "asc"
-        filtered.sort(
+        filtered_rows.sort(
             key=lambda item: (item.get(sort_by) is None, item.get(sort_by)),
             reverse=reverse,
         )
+        paginated = filtered_rows[offset : offset + limit]
+        total_filtered = len(filtered_rows)
 
-    paginated = filtered[offset : offset + limit]
     return {
-        "total": len(rows),
-        "total_filtered": len(filtered),
+        "total": total,
+        "total_filtered": total_filtered,
         "returned": len(paginated),
         "offset": offset,
         "limit": limit,
