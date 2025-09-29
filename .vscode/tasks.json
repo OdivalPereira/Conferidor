@@ -216,6 +216,25 @@
       "problemMatcher": []
     },
     {
+      "label": "UI: npm build",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "if [ -f \"frontend/package.json\" ]; then (cd frontend && npm run build); elif [ -f \"package.json\" ]; then npm run build; else echo 'package.json not found; skipping npm run build.'; fi"
+      ],
+      "windows": {
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-Command",
+          "if (Test-Path 'frontend\\package.json') { Push-Location frontend; npm run build; Pop-Location } elseif (Test-Path 'package.json') { npm run build } else { Write-Host 'package.json not found; skipping npm run build.' }"
+        ]
+      },
+      "problemMatcher": [],
+      "detail": "Builds the frontend bundle with npm when a package.json is available."
+    },
+    {
       "label": "00: pipeline (1\u21925)",
       "dependsOn": [
         "01: loader",
@@ -225,6 +244,16 @@
         "05: dataset UI"
       ],
       "dependsOrder": "sequence"
+    },
+    {
+      "label": "Run",
+      "dependsOn": [
+        "00: pipeline (1\u21925)",
+        "UI: npm build"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": [],
+      "detail": "Runs the full pipeline and triggers the UI npm build afterwards."
     },
     {
       "label": "Clean out/",
