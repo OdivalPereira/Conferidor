@@ -112,6 +112,26 @@ def test_manual_override_delete_removes_adjustment(reload_ui_server):
     assert row.get("original_status") in (None, "")
 
 
+def test_api_version_reports_status_and_dependencies(reload_ui_server):
+    module, data_dir = reload_ui_server
+    schema_path = data_dir / "ui_schema.json"
+    schema_path.write_text(json.dumps({"version": 1}), encoding="utf-8")
+
+    info = module.api_version()
+
+    assert info["app"]["title"] == module.APP_TITLE
+    dependencies = info["dependencies"]
+    assert "fastapi" in dependencies
+    assert dependencies["fastapi"] is None or isinstance(dependencies["fastapi"], str)
+
+    status = info["status"]
+    assert status["paths"]["data_dir"]["path"] == str(data_dir)
+    assert status["paths"]["data_dir"]["exists"] is True
+    assert status["paths"]["schema"]["exists"] is True
+    assert "timestamp" in status
+    assert status["jobs"]["running"] == 0
+
+
 def test_ui_app_endpoint_serves_html(reload_ui_server):
     module, _ = reload_ui_server
 
