@@ -4,12 +4,15 @@ import asyncio
 import hashlib
 import json
 import os
+import platform
+import re
 import shutil
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
+from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
@@ -53,6 +56,7 @@ UI_APP_PATH = Path(__file__).resolve().parent / "ui_app.html"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MANUAL_OVERRIDES_PATH = DATA_DIR / "manual_overrides.jsonl"
 MANUAL_OVERRIDE_TAG = "ajuste_manual"
+REQUIREMENTS_PATH = Path(__file__).resolve().parent.parent / "requirements.txt"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -88,6 +92,67 @@ def _delete_path(path: Path) -> int:
         return _safe_rmtree(path)
     path.unlink()
     return 1
+
+
+_RE_REQUIREMENT_NAME = re.compile(r"^[A-Za-z0-9_.-]+")
+
+
+def _parse_requirement_names(path: Path = REQUIREMENTS_PATH) -> List[str]:
+    if not path.exists():
+        return []
+    names: List[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        line = line.split(";", 1)[0].strip()
+        match = _RE_REQUIREMENT_NAME.match(line)
+        if not match:
+            continue
+        name = match.group(0)
+        if name:
+            names.append(name)
+    return names
+
+
+def _dependency_versions(names: Iterable[str]) -> Dict[str, Optional[str]]:
+    versions: Dict[str, Optional[str]] = {}
+    unique = sorted({name for name in names}, key=lambda value: value.lower())
+    for name in unique:
+        try:
+            versions[name] = importlib_metadata.version(name)
+        except importlib_metadata.PackageNotFoundError:
+            versions[name] = None
+    return versions
+
+
+def _path_status(path: Path) -> Dict[str, object]:
+    exists = path.exists()
+    status: Dict[str, object] = {"path": str(path), "exists": exists}
+    if exists:
+        status["is_dir"] = path.is_dir()
+        try:
+            status["modified_at"] = datetime.fromtimestamp(path.stat().st_mtime).isoformat()
+        except OSError:  # pragma: no cover - filesystem edge case
+            pass
+    return status
+
+
+def _system_status() -> Dict[str, object]:
+    running_jobs = sum(1 for task in JOB_TASKS.values() if not task.done())
+    return {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "python_version": platform.python_version(),
+        "paths": {
+            "data_dir": _path_status(DATA_DIR),
+            "uploads_dir": _path_status(UPLOADS_DIR),
+            "schema": _path_status(SCHEMA_PATH),
+        },
+        "jobs": {
+            "total": len(JOB_TASKS),
+            "running": running_jobs,
+        },
+    }
 
 
 class ProcessPayload(BaseModel):
@@ -622,6 +687,16 @@ def ui_route() -> HTMLResponse:
 @app.get("/api/health")
 def api_health() -> Dict[str, object]:
     return {"ok": True, "data_dir": str(DATA_DIR)}
+
+
+@app.get("/api/version")
+def api_version() -> Dict[str, object]:
+    dependency_names = _parse_requirement_names()
+    return {
+        "app": {"title": APP_TITLE},
+        "dependencies": _dependency_versions(dependency_names),
+        "status": _system_status(),
+    }
 
 
 @app.get("/api/schema")
