@@ -327,6 +327,92 @@ class Candidate:
     f: pd.Series
 
 
+def normalize_key(value: Optional[str]) -> str:
+    if value in (None, ""):
+        return ""
+    return str(value).strip()
+
+
+def ensure_columns(frame: pd.DataFrame, columns: Iterable[str]) -> None:
+    for col in columns:
+        if col not in frame.columns:
+            frame[col] = None
+
+
+def evaluate_pair(
+    s_row: pd.Series,
+    f_row: pd.Series,
+    cfg: MatchConfig,
+    cfop_rules: Dict[str, Dict[str, List[str]]],
+) -> Optional[Candidate]:
+    fonte_tipo = str(f_row.get("fonte_tipo") or "?")
+    value_ok, delta_valor = within_value(s_row.get("valor_float"), f_row.get("valor_float"), cfg)
+    window = cfg.janela_para(fonte_tipo)
+    date_ok, delta_dias = within_days(s_row.get("data_dt"), f_row.get("data_dt"), window)
+    tokens_overlap = bool((s_row.get("tokens_set") or set()) & (f_row.get("tokens_set") or set()))
+
+    s_part = normalize_key(s_row.get("participante_key"))
+    f_part = normalize_key(f_row.get("participante_key"))
+    s_doc = normalize_key(s_row.get("doc_num"))
+    f_doc = normalize_key(f_row.get("doc_num"))
+
+    participant_match = bool(s_part and f_part and s_part == f_part)
+    doc_match = bool(s_doc and f_doc and s_doc == f_doc)
+
+    strategy = None
+    if doc_match and participant_match and value_ok:
+        strategy = "S1"
+    elif doc_match and participant_match and date_ok:
+        strategy = "S2"
+    elif doc_match and value_ok and date_ok:
+        strategy = "S3"
+    elif participant_match and value_ok and date_ok:
+        strategy = "S4"
+    elif tokens_overlap and value_ok and date_ok:
+        strategy = "S5"
+
+    if strategy is None:
+        return None
+
+    matches = {
+        "participant": participant_match,
+        "participant_conflict": bool(s_part and f_part and not participant_match),
+        "valor_ok": value_ok,
+        "valor_fail": not value_ok,
+        "tokens": tokens_overlap,
+    }
+    cfop_state = cfop_consistent(s_row, f_row, cfop_rules)
+    same_month = bool(
+        s_row.get("mes_ref")
+        and f_row.get("mes_ref")
+        and s_row.get("mes_ref") == f_row.get("mes_ref")
+    )
+
+    score, reasons = compute_score(
+        strategy,
+        matches,
+        delta_valor,
+        delta_dias,
+        cfop_state,
+        cfg,
+        fonte_tipo,
+        same_month,
+    )
+
+    return Candidate(
+        sucessor_idx=int(s_row.get("row_id", s_row.name + 1)),
+        fonte_idx=int(f_row.get("row_id", f_row.name + 1)),
+        fonte_tipo=fonte_tipo,
+        strategy=strategy,
+        score=score,
+        reasons=reasons,
+        delta_valor=delta_valor,
+        delta_dias=delta_dias,
+        s=s_row,
+        f=f_row,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
@@ -382,123 +468,143 @@ def build_candidates(
     fontes = fontes.reset_index(drop=True).copy()
     sucessor = sucessor.reset_index(drop=True).copy()
 
-    fontes["valor_float"] = fontes["valor"].map(parse_float)
-    fontes["data_dt"] = fontes["data_iso"].map(parse_date)
-    fontes["tokens_set"] = fontes["tokens"].map(parse_tokens)
-    fontes["participante_key"] = fontes["participante_key"].map(to_upper)
-    fontes["doc_num"] = fontes["doc_num"].fillna("")
+    ensure_columns(
+        sucessor,
+        ["valor", "data_iso", "tokens", "participante_key", "doc_num", "mes_ref"],
+    )
+    ensure_columns(
+        fontes,
+        [
+            "valor",
+            "data_iso",
+            "tokens",
+            "participante_key",
+            "doc_num",
+            "mes_ref",
+            "fonte_tipo",
+        ],
+    )
 
+    fontes["valor_float"] = fontes["valor"].map(parse_float)
     sucessor["valor_float"] = sucessor["valor"].map(parse_float)
+
+    fontes["data_dt"] = fontes["data_iso"].map(parse_date)
     sucessor["data_dt"] = sucessor["data_iso"].map(parse_date)
+
+    fontes["tokens_set"] = fontes["tokens"].map(parse_tokens)
     sucessor["tokens_set"] = sucessor["tokens"].map(parse_tokens)
+
+    fontes["participante_key"] = fontes["participante_key"].map(to_upper)
     sucessor["participante_key"] = sucessor["participante_key"].map(to_upper)
+
+    fontes["doc_num"] = fontes["doc_num"].fillna("")
     sucessor["doc_num"] = sucessor["doc_num"].fillna("")
 
-    doc_index: Dict[str, Set[int]] = {}
-    participant_index: Dict[str, Set[int]] = {}
-    token_index: Dict[str, Set[int]] = {}
+    fontes["doc_key"] = fontes["doc_num"].map(normalize_key)
+    sucessor["doc_key"] = sucessor["doc_num"].map(normalize_key)
 
-    for idx, row in fontes.iterrows():
-        doc = str(row.get("doc_num") or "").strip()
-        if doc:
-            doc_index.setdefault(doc, set()).add(idx)
-        part = str(row.get("participante_key") or "").strip()
-        if part:
-            participant_index.setdefault(part, set()).add(idx)
-        for token in row.get("tokens_set") or set():
-            token_index.setdefault(token, set()).add(idx)
+    fontes["participante_key_norm"] = fontes["participante_key"].map(normalize_key)
+    sucessor["participante_key_norm"] = sucessor["participante_key"].map(normalize_key)
 
-    all_candidates: List[Candidate] = []
+    fontes["tokens_list"] = fontes["tokens_set"].map(lambda x: sorted(x) if x else [])
+    sucessor["tokens_list"] = sucessor["tokens_set"].map(lambda x: sorted(x) if x else [])
 
-    for _, s_row in sucessor.iterrows():
-        s_idx = int(s_row.get("row_id", s_row.name + 1))
-        s_doc = str(s_row.get("doc_num") or "").strip()
-        s_part = str(s_row.get("participante_key") or "").strip()
-        s_tokens = s_row.get("tokens_set") or set()
-        s_value = s_row.get("valor_float")
+    sucessor["s_iloc"] = sucessor.index
+    fontes["f_iloc"] = fontes.index
 
-        candidate_ids: Set[int] = set()
-        if s_doc:
-            candidate_ids.update(doc_index.get(s_doc, set()))
-        if s_part:
-            candidate_ids.update(participant_index.get(s_part, set()))
-        for token in s_tokens:
-            candidate_ids.update(token_index.get(token, set()))
+    candidate_pairs: Set[Tuple[int, int]] = set()
 
-        if not candidate_ids and s_value is not None:
-            limit = max(cfg.valor_abs_tol(), abs(s_value) * cfg.valor_pct_tol())
+    s_doc_part = sucessor[
+        (sucessor["doc_key"] != "") & (sucessor["participante_key_norm"] != "")
+    ][["s_iloc", "doc_key", "participante_key_norm"]]
+    f_doc_part = fontes[
+        (fontes["doc_key"] != "") & (fontes["participante_key_norm"] != "")
+    ][["f_iloc", "doc_key", "participante_key_norm"]]
+    if not s_doc_part.empty and not f_doc_part.empty:
+        merge_dp = s_doc_part.merge(
+            f_doc_part,
+            on=["doc_key", "participante_key_norm"],
+            how="inner",
+        )
+        candidate_pairs.update(
+            {(int(row.s_iloc), int(row.f_iloc)) for row in merge_dp.itertuples()}
+        )
+
+    s_doc = sucessor[sucessor["doc_key"] != ""][["s_iloc", "doc_key"]]
+    f_doc = fontes[fontes["doc_key"] != ""][["f_iloc", "doc_key"]]
+    if not s_doc.empty and not f_doc.empty:
+        merge_d = s_doc.merge(f_doc, on="doc_key", how="inner")
+        candidate_pairs.update(
+            {(int(row.s_iloc), int(row.f_iloc)) for row in merge_d.itertuples()}
+        )
+
+    s_part = sucessor[sucessor["participante_key_norm"] != ""][
+        ["s_iloc", "participante_key_norm"]
+    ]
+    f_part = fontes[fontes["participante_key_norm"] != ""][
+        ["f_iloc", "participante_key_norm"]
+    ]
+    if not s_part.empty and not f_part.empty:
+        merge_p = s_part.merge(f_part, on="participante_key_norm", how="inner")
+        candidate_pairs.update(
+            {(int(row.s_iloc), int(row.f_iloc)) for row in merge_p.itertuples()}
+        )
+
+    s_tokens = sucessor[["s_iloc", "tokens_list"]].explode("tokens_list").dropna()
+    f_tokens = fontes[["f_iloc", "tokens_list"]].explode("tokens_list").dropna()
+    if not s_tokens.empty and not f_tokens.empty:
+        merge_t = s_tokens.rename(columns={"tokens_list": "token"}).merge(
+            f_tokens.rename(columns={"tokens_list": "token"}),
+            on="token",
+            how="inner",
+        )
+        candidate_pairs.update(
+            {(int(row.s_iloc), int(row.f_iloc)) for row in merge_t.itertuples()}
+        )
+
+    per_s_candidates: Dict[int, List[Candidate]] = {}
+    seen_pairs: Set[Tuple[int, int]] = set()
+    matched_s: Set[int] = set()
+
+    for s_iloc, f_iloc in sorted(candidate_pairs):
+        if (s_iloc, f_iloc) in seen_pairs:
+            continue
+        seen_pairs.add((s_iloc, f_iloc))
+        s_row = sucessor.loc[s_iloc]
+        f_row = fontes.loc[f_iloc]
+        candidate = evaluate_pair(s_row, f_row, cfg, cfop_rules)
+        if candidate is None:
+            continue
+        per_s_candidates.setdefault(s_iloc, []).append(candidate)
+        matched_s.add(s_iloc)
+
+    valor_tol_pct = cfg.valor_pct_tol()
+    valor_tol_abs = cfg.valor_abs_tol()
+    if valor_tol_pct or valor_tol_abs:
+        for s_iloc, s_row in sucessor.iterrows():
+            if s_iloc in matched_s:
+                continue
+            s_value = s_row.get("valor_float")
+            if s_value is None:
+                continue
+            limit = max(valor_tol_abs, abs(s_value) * valor_tol_pct)
             mask = fontes["valor_float"].notna()
             mask &= (fontes["valor_float"] - s_value).abs() <= limit + 1e-9
-            candidate_ids.update(set(fontes[mask].index))
-
-        if not candidate_ids:
-            continue
-
-        local: List[Candidate] = []
-        for f_idx in candidate_ids:
-            f_row = fontes.loc[f_idx]
-            fonte_tipo = str(f_row.get("fonte_tipo") or "?")
-
-            value_ok, delta_valor = within_value(s_value, f_row.get("valor_float"), cfg)
-            window = cfg.janela_para(fonte_tipo)
-            date_ok, delta_dias = within_days(s_row.get("data_dt"), f_row.get("data_dt"), window)
-            tokens_overlap = bool((s_tokens or set()) & (f_row.get("tokens_set") or set()))
-            participant_match = bool(s_part and s_part == str(f_row.get("participante_key") or "").strip())
-            doc_match = bool(s_doc and s_doc == str(f_row.get("doc_num") or "").strip())
-
-            strategy = None
-            if doc_match and participant_match and value_ok:
-                strategy = "S1"
-            elif doc_match and participant_match and date_ok:
-                strategy = "S2"
-            elif doc_match and value_ok and date_ok:
-                strategy = "S3"
-            elif participant_match and value_ok and date_ok:
-                strategy = "S4"
-            elif tokens_overlap and value_ok and date_ok:
-                strategy = "S5"
-
-            if strategy is None:
+            if not mask.any():
                 continue
+            for f_iloc in fontes[mask].index:
+                if (s_iloc, f_iloc) in seen_pairs:
+                    continue
+                seen_pairs.add((s_iloc, f_iloc))
+                f_row = fontes.loc[f_iloc]
+                candidate = evaluate_pair(s_row, f_row, cfg, cfop_rules)
+                if candidate is None:
+                    continue
+                per_s_candidates.setdefault(s_iloc, []).append(candidate)
 
-            matches = {
-                "participant": participant_match,
-                "participant_conflict": bool(s_part and f_row.get("participante_key") and not participant_match),
-                "valor_ok": value_ok,
-                "valor_fail": not value_ok,
-                "tokens": tokens_overlap,
-            }
-            cfop_state = cfop_consistent(s_row, f_row, cfop_rules)
-            same_month = bool(s_row.get("mes_ref") and f_row.get("mes_ref") and s_row.get("mes_ref") == f_row.get("mes_ref"))
-
-            score, reasons = compute_score(
-                strategy,
-                matches,
-                delta_valor,
-                delta_dias,
-                cfop_state,
-                cfg,
-                fonte_tipo,
-                same_month,
-            )
-
-            local.append(
-                Candidate(
-                    sucessor_idx=s_idx,
-                    fonte_idx=int(f_row.get("row_id", f_idx + 1)),
-                    fonte_tipo=fonte_tipo,
-                    strategy=strategy,
-                    score=score,
-                    reasons=reasons,
-                    delta_valor=delta_valor,
-                    delta_dias=delta_dias,
-                    s=s_row,
-                    f=f_row,
-                )
-            )
-
-        if not local:
-            continue
+    all_candidates: List[Candidate] = []
+    for s_iloc in sorted(per_s_candidates):
+        local = per_s_candidates[s_iloc]
         local.sort(key=lambda c: (-c.score, abs(c.delta_valor or 0.0), abs(c.delta_dias or 0)))
         all_candidates.extend(local[: cfg.max_candidates()])
 
