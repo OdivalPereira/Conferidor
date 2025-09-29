@@ -19,8 +19,8 @@ if str(SRC_DIR) not in sys.path:
 
 from loader import main as loader_main
 from normalizer import main as normalizer_main
-from matcher import main as matcher_main
-from issues_engine import main as issues_main
+from matcher import MatchConfig, main as matcher_main
+from issues_engine import main as issues_main, validate_rules_file
 from ui_dataset_builder import main as ui_dataset_main
 
 
@@ -29,6 +29,14 @@ class PipelineCancelled(Exception):
 
 
 _CANCEL_CHECK: Optional[Callable[[], None]] = None
+
+
+class ConfigurationError(RuntimeError):
+    """Raised when one or more configuration files fail validation."""
+
+    def __init__(self, problems: Sequence[str]):
+        super().__init__("; ".join(problems))
+        self.problems = list(problems)
 
 
 def set_cancel_check(callback: Optional[Callable[[], None]]) -> None:
@@ -212,6 +220,22 @@ def require_files(description: str, files: Sequence[Path]) -> None:
 
 def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
+
+
+def validate_configurations(matching_config: Path, issues_rules: Path) -> None:
+    problems: List[str] = []
+    try:
+        MatchConfig.load(matching_config)
+    except Exception as exc:  # pragma: no cover - mensagem específica é validada em testes
+        problems.append(f"matching_pesos.yml: {exc}")
+
+    try:
+        validate_rules_file(issues_rules)
+    except Exception as exc:  # pragma: no cover - mensagem específica é validada em testes
+        problems.append(f"issues_rules.yml: {exc}")
+
+    if problems:
+        raise ConfigurationError(problems)
 
 
 @dataclass
@@ -766,6 +790,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if not args.skip_ui:
         require_files("UI schema", [schema_path])
+
+    try:
+        validate_configurations(matching_path, issues_rules_path)
+    except ConfigurationError as exc:
+        sys.stderr.write("[pipeline] Falha na validação das configurações:\n")
+        for problem in exc.problems:
+            sys.stderr.write(f"[pipeline]   - {problem}\n")
+        return 2
 
     staging_dir = out_dir / "staging"
     normalized_dir = out_dir / "normalized"

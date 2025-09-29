@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import pandas as pd
 import yaml
@@ -77,7 +77,10 @@ class MatchConfig:
     @classmethod
     def load(cls, path: Path) -> "MatchConfig":
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        return cls(
+        if not isinstance(data, dict):
+            raise ValueError(f"Configuração de matching inválida em {path}: documento deve ser um mapeamento.")
+
+        cfg = cls(
             limiares=data.get("limiares", {}),
             tolerancias=data.get("tolerancias", {}),
             estrategias=data.get("estrategias", {}),
@@ -85,6 +88,65 @@ class MatchConfig:
             penalidades=data.get("penalidades", {}),
             desempate=data.get("desempate", {}),
         )
+        cfg.validate(source=path)
+        return cfg
+
+    def validate(self, *, source: Optional[Path | str] = None) -> None:
+        problems: List[str] = []
+        label = f" ({source})" if source else ""
+
+        def _ensure_mapping(obj: Any, name: str) -> Dict[str, Any]:
+            if isinstance(obj, dict):
+                return obj
+            problems.append(f"{name} deve ser um objeto mapeável (dict).")
+            return {}
+
+        def _ensure_number(value: Any, name: str, *, allow_none: bool = True) -> None:
+            if value is None and allow_none:
+                return
+            try:
+                float(value)  # valida também strings numéricas
+            except (TypeError, ValueError):
+                problems.append(f"{name} deve ser numérico (recebido {value!r}).")
+
+        estrategias = _ensure_mapping(self.estrategias, "estrategias")
+        if not estrategias:
+            problems.append("É necessário definir ao menos um peso em 'estrategias'.")
+        else:
+            for key, value in estrategias.items():
+                _ensure_number(value, f"estrategias.{key}", allow_none=False)
+
+        limiares = _ensure_mapping(self.limiares, "limiares")
+        for key in ("auto_match", "pendente_min", "max_candidates", "janela_default_dias"):
+            _ensure_number(limiares.get(key), f"limiares.{key}")
+
+        tolerancias = _ensure_mapping(self.tolerancias, "tolerancias")
+        valor_cfg = _ensure_mapping(tolerancias.get("valor", {}), "tolerancias.valor")
+        _ensure_number(valor_cfg.get("abs"), "tolerancias.valor.abs")
+        _ensure_number(valor_cfg.get("pct"), "tolerancias.valor.pct")
+
+        data_cfg = _ensure_mapping(tolerancias.get("data", {}), "tolerancias.data")
+        janela_cfg = _ensure_mapping(
+            data_cfg.get("janela_dias_por_fonte", {}), "tolerancias.data.janela_dias_por_fonte"
+        )
+        for key, value in janela_cfg.items():
+            _ensure_number(value, f"tolerancias.data.janela_dias_por_fonte.{key}")
+
+        bonus_cfg = _ensure_mapping(self.bonus, "bonus")
+        for key, value in bonus_cfg.items():
+            _ensure_number(value, f"bonus.{key}")
+
+        penalidades_cfg = _ensure_mapping(self.penalidades, "penalidades")
+        for key, value in penalidades_cfg.items():
+            _ensure_number(value, f"penalidades.{key}")
+
+        desempate_cfg = _ensure_mapping(self.desempate, "desempate")
+        prioridade_cfg = _ensure_mapping(desempate_cfg.get("prioridade_fonte", {}), "desempate.prioridade_fonte")
+        for key, value in prioridade_cfg.items():
+            _ensure_number(value, f"desempate.prioridade_fonte.{key}")
+
+        if problems:
+            raise ValueError(f"Configuração de matching inválida{label}: " + "; ".join(problems))
 
     def auto_match(self) -> float:
         return float(self.limiares.get("auto_match", 70))
