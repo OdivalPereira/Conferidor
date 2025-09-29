@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -252,6 +253,161 @@ class StepDefinition:
     log_path: Optional[Path] = None
     metrics_collector: Optional[Callable[[StepContext], StepMetrics]] = None
     extra: Dict[str, Any] = field(default_factory=dict)
+    fingerprint_paths: List[Path] = field(default_factory=list)
+    outputs: List[Path] = field(default_factory=list)
+
+
+def _hash_file(hasher: "hashlib._Hash", path: Path) -> None:
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            hasher.update(chunk)
+
+
+def _file_digest(path: Path) -> str:
+    hasher = hashlib.sha256()
+    _hash_file(hasher, path)
+    return hasher.hexdigest()
+
+
+def build_signature(step: StepDefinition) -> Dict[str, Any]:
+    signature: Dict[str, Any] = {"args": list(step.args), "inputs": []}
+    for path in sorted({p.resolve() for p in step.fingerprint_paths}):
+        entry: Dict[str, Any] = {"path": str(path)}
+        if not path.exists():
+            entry["missing"] = True
+        elif path.is_file():
+            entry["type"] = "file"
+            entry["hash"] = _file_digest(path)
+            entry["size"] = path.stat().st_size
+        elif path.is_dir():
+            entry["type"] = "dir"
+            files = []
+            for child in sorted(path.rglob("*")):
+                if child.is_file():
+                    files.append(
+                        {
+                            "name": child.relative_to(path).as_posix(),
+                            "hash": _file_digest(child),
+                            "size": child.stat().st_size,
+                        }
+                    )
+            entry["files"] = files
+        else:
+            entry["type"] = "other"
+        signature["inputs"].append(entry)
+    return signature
+
+
+def _snapshot_outputs(paths: Sequence[Path]) -> tuple[List[Dict[str, Any]], bool]:
+    snapshot: List[Dict[str, Any]] = []
+    complete = True
+    for raw_path in paths:
+        path = raw_path.resolve()
+        if path.is_file():
+            snapshot.append({"path": str(path), "kind": "file"})
+        elif path.is_dir():
+            files = [p.relative_to(path).as_posix() for p in sorted(path.rglob("*")) if p.is_file()]
+            snapshot.append({"path": str(path), "kind": "dir", "files": files})
+            if not files:
+                complete = False
+        else:
+            complete = False
+    return snapshot, complete
+
+
+class PipelineCache:
+    def __init__(self, path: Path):
+        self.path = path
+        self.data: Dict[str, Any] = {"steps": {}}
+        self._loaded = False
+
+    def load(self) -> None:
+        if self._loaded:
+            return
+        if self.path.exists():
+            try:
+                self.data = json.loads(self.path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                self.data = {"steps": {}}
+        else:
+            ensure_dir(self.path.parent)
+            self.data = {"steps": {}}
+        self._loaded = True
+
+    def save(self) -> None:
+        ensure_dir(self.path.parent)
+        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def signature_for(self, step: StepDefinition) -> Dict[str, Any]:
+        return build_signature(step)
+
+    def _normalize_signature(self, signature: Dict[str, Any]) -> tuple[list[str], Dict[str, Dict[str, Any]]]:
+        args = list(signature.get("args") or [])
+        inputs: Dict[str, Dict[str, Any]] = {}
+        for item in signature.get("inputs", []) or []:
+            path = item.get("path")
+            if not path:
+                continue
+            entry = dict(item)
+            entry.pop("path", None)
+            files = entry.get("files")
+            if isinstance(files, list):
+                if files and isinstance(files[0], dict):
+                    entry["files"] = sorted(files, key=lambda item: json.dumps(item, sort_keys=True))
+                else:
+                    entry["files"] = sorted(files)
+            inputs[str(path)] = entry
+        return args, inputs
+
+    def should_skip(self, step: StepDefinition, signature: Dict[str, Any]) -> bool:
+        steps = self.data.get("steps") or {}
+        entry = steps.get(step.name)
+        if not entry:
+            return False
+        stored_signature = entry.get("signature")
+        if not stored_signature:
+            return False
+        stored_args, stored_inputs = self._normalize_signature(stored_signature)
+        current_args, current_inputs = self._normalize_signature(signature)
+        if stored_args != current_args or stored_inputs != current_inputs:
+            return False
+        recorded_outputs: List[Dict[str, Any]] = entry.get("outputs") or []
+        if step.outputs and not recorded_outputs:
+            return False
+        for item in recorded_outputs:
+            path = Path(item.get("path", ""))
+            kind = item.get("kind")
+            if kind == "file":
+                if not path.exists():
+                    return False
+            elif kind == "dir":
+                if not path.exists():
+                    return False
+                files = item.get("files", [])
+                if not files:
+                    return False
+                for rel in files:
+                    if not (path / rel).exists():
+                        return False
+            else:
+                return False
+        return True
+
+    def update(self, step: StepDefinition, signature: Dict[str, Any]) -> None:
+        outputs_snapshot, complete = _snapshot_outputs(step.outputs)
+        if step.outputs and not complete:
+            self.data.get("steps", {}).pop(step.name, None)
+        else:
+            steps = self.data.setdefault("steps", {})
+            steps[step.name] = {
+                "signature": signature,
+                "outputs": outputs_snapshot,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        self.save()
 
 
 def append_jsonl(path: Path, record: Dict[str, Any]) -> None:
@@ -446,8 +602,58 @@ def ui_metrics(context: StepContext) -> StepMetrics:
     return metrics
 
 
-def call_step(step: StepDefinition, pipeline_log: Path, *, staging_dir: Path, normalized_dir: Path, match_dir: Path, out_dir: Path) -> None:
+def call_step(
+    step: StepDefinition,
+    pipeline_log: Path,
+    *,
+    staging_dir: Path,
+    normalized_dir: Path,
+    match_dir: Path,
+    out_dir: Path,
+    cache: PipelineCache,
+) -> None:
+    if step.name == "matcher":
+        dataset_flags = {
+            "--sucessor": "sucessor",
+            "--entradas": "entradas",
+            "--saidas": "saidas",
+            "--servicos": "servicos",
+        }
+        updated_args = list(step.args)
+        for index, token in enumerate(updated_args[:-1]):
+            dataset = dataset_flags.get(token)
+            if dataset is None:
+                continue
+            resolved = choose_normalized_table(normalized_dir, dataset)
+            updated_args[index + 1] = str(resolved)
+        step.args = updated_args
+
     _ensure_not_cancelled()
+    cache.load()
+    should_attempt_skip = bool(step.fingerprint_paths)
+    pre_signature = cache.signature_for(step) if should_attempt_skip else {}
+
+    if should_attempt_skip:
+        skip_ready = cache.should_skip(step, pre_signature)
+    else:
+        skip_ready = False
+
+    if skip_ready:
+        timestamp = datetime.now(timezone.utc)
+        append_jsonl(
+            pipeline_log,
+            {
+                "step": step.name,
+                "event": "skip",
+                "timestamp": timestamp.isoformat(),
+                "status": "skipped",
+                "reason": "fingerprint unchanged; reutilizando artefatos",  # noqa: E501
+            },
+        )
+        sys.stdout.write(f"[pipeline] Skipping {step.name} (artefatos reutilizados).\n")
+        _ensure_not_cancelled()
+        return
+
     args = list(step.args)
     sys.stdout.write(f"[pipeline] Running {step.name}...\n")
 
@@ -526,6 +732,10 @@ def call_step(step: StepDefinition, pipeline_log: Path, *, staging_dir: Path, no
         for item in metrics.inconsistencies:
             sys.stdout.write(f"[pipeline]   - {item}\n")
 
+    if should_attempt_skip:
+        post_signature = cache.signature_for(step)
+        cache.update(step, post_signature)
+
     _ensure_not_cancelled()
 
 
@@ -569,6 +779,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if pipeline_log_path.exists():
         pipeline_log_path.unlink()
 
+    pipeline_cache = PipelineCache(log_dir / "pipeline_cache.json")
+
     steps: List[StepDefinition] = []
 
     loader_log = log_dir / "loader.jsonl"
@@ -606,6 +818,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     str(input_paths["plano"]),
                 ]
             },
+            fingerprint_paths=[
+                profiles_path,
+                input_paths["sucessor"],
+                input_paths["entradas"],
+                input_paths["saidas"],
+                input_paths["servicos"],
+                input_paths["fornecedores"],
+                input_paths["plano"],
+            ],
+            outputs=[staging_dir, loader_log],
         )
     )
 
@@ -629,19 +851,39 @@ def main(argv: Sequence[str] | None = None) -> int:
             args=normalizer_args,
             log_path=normalizer_log,
             metrics_collector=normalizer_metrics,
+            fingerprint_paths=[staging_dir, profiles_path, tokens_path],
+            outputs=[normalized_dir, normalizer_log],
         )
     )
 
     matcher_log = match_dir / "match_log.jsonl"
+    matcher_inputs = {
+        "sucessor": choose_normalized_table(normalized_dir, "sucessor"),
+        "entradas": choose_normalized_table(normalized_dir, "entradas"),
+        "saidas": choose_normalized_table(normalized_dir, "saidas"),
+        "servicos": choose_normalized_table(normalized_dir, "servicos"),
+    }
+    matcher_csv_paths = {
+        "sucessor": normalized_dir / "sucessor.csv",
+        "entradas": normalized_dir / "entradas.csv",
+        "saidas": normalized_dir / "saidas.csv",
+        "servicos": normalized_dir / "servicos.csv",
+    }
+    matcher_parquet_paths = {
+        "sucessor": normalized_dir / "sucessor.parquet",
+        "entradas": normalized_dir / "entradas.parquet",
+        "saidas": normalized_dir / "saidas.parquet",
+        "servicos": normalized_dir / "servicos.parquet",
+    }
     matcher_args: List[str] = [
         "--sucessor",
-        str(choose_normalized_table(normalized_dir, "sucessor")),
+        str(matcher_inputs["sucessor"]),
         "--entradas",
-        str(choose_normalized_table(normalized_dir, "entradas")),
+        str(matcher_inputs["entradas"]),
         "--saidas",
-        str(choose_normalized_table(normalized_dir, "saidas")),
+        str(matcher_inputs["saidas"]),
         "--servicos",
-        str(choose_normalized_table(normalized_dir, "servicos")),
+        str(matcher_inputs["servicos"]),
         "--cfg-pesos",
         str(matching_path),
         "--cfg-tokens",
@@ -665,6 +907,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "sem_fonte": match_dir / "reconc_sem_fonte.csv",
                 "sem_sucessor": match_dir / "reconc_sem_sucessor.csv",
             },
+            fingerprint_paths=[
+                matcher_parquet_paths["sucessor"],
+                matcher_parquet_paths["entradas"],
+                matcher_parquet_paths["saidas"],
+                matcher_parquet_paths["servicos"],
+                matcher_csv_paths["sucessor"],
+                matcher_csv_paths["entradas"],
+                matcher_csv_paths["saidas"],
+                matcher_csv_paths["servicos"],
+                matching_path,
+                tokens_path,
+                cfop_path,
+            ],
+            outputs=[
+                match_dir,
+                matcher_log,
+                match_dir / "reconc_grid.csv",
+                match_dir / "reconc_sem_fonte.csv",
+                match_dir / "reconc_sem_sucessor.csv",
+            ],
         )
     )
 
@@ -690,6 +952,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "issues": issues_out,
                 "grid_out": issues_grid_out,
             },
+            fingerprint_paths=[
+                match_dir / "reconc_grid.csv",
+                match_dir / "reconc_sem_fonte.csv",
+                match_dir / "reconc_sem_sucessor.csv",
+                issues_rules_path,
+            ],
+            outputs=[issues_out, issues_grid_out],
         )
     )
 
@@ -718,6 +987,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 log_path=ui_jsonl,
                 metrics_collector=ui_metrics,
                 extra={"meta": ui_meta},
+                fingerprint_paths=[
+                    issues_grid_out,
+                    match_dir / "reconc_sem_fonte.csv",
+                    match_dir / "reconc_sem_sucessor.csv",
+                    schema_path,
+                ],
+                outputs=[ui_jsonl, ui_meta],
             )
         )
 
@@ -730,6 +1006,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 normalized_dir=normalized_dir,
                 match_dir=match_dir,
                 out_dir=out_dir,
+                cache=pipeline_cache,
             )
     except PipelineCancelled:
         append_jsonl(
