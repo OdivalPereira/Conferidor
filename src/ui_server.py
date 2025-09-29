@@ -17,9 +17,11 @@ from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from html import escape
+from urllib.parse import quote
 
 try:
     from export_xlsx import run as run_export_xlsx  # type: ignore
@@ -177,7 +179,6 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-app.mount("/files", StaticFiles(directory=str(DATA_DIR)), name="files")
 
 
 def _read_json(path: Path) -> Dict[str, object]:
@@ -358,13 +359,127 @@ def _relative_download(path: Path) -> Optional[str]:
         rel = path.resolve().relative_to(DATA_DIR)
     except ValueError:
         return None
-    return f"/files/{rel.as_posix()}"
+    encoded = quote(rel.as_posix(), safe="")
+    return f"/api/files/download?path={encoded}"
+
+
+def _ensure_within_data_dir(path: Path) -> Path:
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(DATA_DIR)
+    except ValueError:
+        raise HTTPException(403, detail="Path outside data directory")
+    return resolved
+
+
+def _resolve_data_dir_entry(value: Optional[str], *, expect_file: bool) -> Path:
+    if not value:
+        candidate = DATA_DIR
+    else:
+        candidate_path = Path(value)
+        if candidate_path.is_absolute():
+            candidate = candidate_path
+        else:
+            candidate = DATA_DIR / candidate_path
+    resolved = _ensure_within_data_dir(candidate)
+    if not resolved.exists():
+        raise HTTPException(404, detail="Requested path not found")
+    if expect_file and not resolved.is_file():
+        raise HTTPException(400, detail="Requested path is not a file")
+    if not expect_file and not resolved.is_dir():
+        raise HTTPException(400, detail="Requested path is not a directory")
+    return resolved
+
+
+def _directory_listing_html(directory: Path) -> str:
+    try:
+        rel = directory.relative_to(DATA_DIR).as_posix()
+    except ValueError:
+        rel = str(directory)
+    display_path = rel or "/"
+    parent_link = ""
+    if directory != DATA_DIR:
+        parent = directory.parent
+        try:
+            parent_rel = parent.relative_to(DATA_DIR).as_posix()
+        except ValueError:
+            parent_rel = ""
+        parent_encoded = quote(parent_rel, safe="")
+        parent_link = (
+            f'<li><a href="/files?path={parent_encoded}">../</a></li>'
+        )
+
+    entries: List[str] = []
+    try:
+        candidates = sorted(
+            directory.iterdir(),
+            key=lambda entry: (not entry.is_dir(), entry.name.lower()),
+        )
+    except OSError:
+        candidates = []
+
+    for entry in candidates:
+        try:
+            entry_rel = entry.resolve().relative_to(DATA_DIR).as_posix()
+        except ValueError:
+            continue
+        name = escape(entry.name)
+        if entry.is_dir():
+            url = f"/files?path={quote(entry_rel, safe='')}"
+            display_name = f"{name}/"
+            size = "—"
+        else:
+            url = f"/api/files/download?path={quote(entry_rel, safe='')}"
+            display_name = name
+            try:
+                size = f"{entry.stat().st_size:,}".replace(",", ".")
+            except OSError:
+                size = "?"
+        entries.append(
+            f'<li><a href="{url}">{display_name}</a>'
+            f"<span style=\"margin-left:1rem;color:#64748b;font-size:0.85rem;\">{size}</span></li>"
+        )
+
+    if not entries:
+        entries.append('<li style="color:#64748b;">(vazio)</li>')
+
+    items_html = "".join(entries)
+    if parent_link:
+        items_html = parent_link + items_html
+
+    return (
+        "<!DOCTYPE html>"
+        "<html lang=\"pt-BR\">"
+        "<head>"
+        "<meta charset=\"utf-8\">"
+        "<title>Arquivos processados</title>"
+        "<style>body{font-family:system-ui, sans-serif;margin:2rem;background:#f8fafc;color:#0f172a;}"
+        "h1{font-size:1.5rem;margin-bottom:1rem;}"
+        "ul{list-style:none;padding:0;}"
+        "li{margin-bottom:0.35rem;}"
+        "a{text-decoration:none;color:#1d4ed8;}"
+        "a:hover{text-decoration:underline;}"
+        "</style>"
+        "</head>"
+        "<body>"
+        f"<h1>Arquivos — {escape(display_path)}</h1>"
+        f"<ul>{items_html}</ul>"
+        "</body>"
+        "</html>"
+    )
 
 
 def _ui_app_html() -> str:
     if not UI_APP_PATH.exists():
         raise HTTPException(500, detail=f"ui_app.html not found at {UI_APP_PATH}")
     return UI_APP_PATH.read_text(encoding="utf-8")
+
+
+@app.get("/files", response_class=HTMLResponse)
+@app.get("/files/", response_class=HTMLResponse)
+def files_browser(path: Optional[str] = Query(None, description="Relative directory path")) -> HTMLResponse:
+    directory = _resolve_data_dir_entry(path, expect_file=False)
+    return HTMLResponse(_directory_listing_html(directory))
 
 
 def get_uploads_root() -> Path:
@@ -829,11 +944,17 @@ def api_files() -> Dict[str, object]:
                     "name": path.name,
                     "path": rel,
                     "size": path.stat().st_size,
-                    "download": f"/files/{rel}",
+                    "download": _relative_download(path),
                 }
             )
     items.sort(key=lambda item: item["path"].lower())
     return {"count": len(items), "items": items}
+
+
+@app.get("/api/files/download")
+def api_files_download(path: str = Query(..., description="Relative path within data directory")) -> FileResponse:
+    safe_path = _resolve_data_dir_entry(path, expect_file=True)
+    return FileResponse(str(safe_path), filename=safe_path.name)
 
 
 @app.delete("/api/data")
