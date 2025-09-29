@@ -18,7 +18,7 @@ from issues_engine import main as issues_main
 from ui_dataset_builder import main as dataset_main
 from export_xlsx import run as export_xlsx_run
 from export_pdf import run as export_pdf_run
-from run_pipeline import resolve_inputs, choose_normalized_table
+from run_pipeline import resolve_inputs, choose_normalized_table, main as run_pipeline_main
 
 FIXTURES = ROOT / "tests" / "fixtures"
 CFG = ROOT / "cfg"
@@ -198,6 +198,50 @@ def test_exports(tmp_path):
     pdf_path = result_pdf.get("pdf")
     html_path = result_pdf.get("html") or result_pdf.get("download_html")
     assert (pdf_path and Path(pdf_path).exists()) or (html_path and Path(html_path).exists())
+
+
+def test_run_pipeline_incremental_skips_steps(tmp_path):
+    dados_dir = tmp_path / "dados"
+    for name in [
+        "sucessor.csv",
+        "suprema_entradas.csv",
+        "suprema_saidas.csv",
+        "suprema_servicos.csv",
+        "fornecedores.csv",
+        "plano_contas.csv",
+    ]:
+        copy_fixture(dados_dir, name)
+
+    out_dir = tmp_path / "out"
+    log_dir = tmp_path / "logs"
+    argv = [
+        "--dados-dir",
+        str(dados_dir),
+        "--cfg-dir",
+        str(CFG),
+        "--out-dir",
+        str(out_dir),
+        "--log-dir",
+        str(log_dir),
+        "--skip-ui",
+    ]
+
+    assert run_pipeline_main(argv) == 0
+
+    log_path = log_dir / "pipeline.jsonl"
+    assert log_path.exists()
+
+    assert run_pipeline_main(argv) == 0
+
+    content = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    skip_entries = [entry for entry in content if entry.get("event") == "skip"]
+    assert {entry.get("step") for entry in skip_entries} == {"loader", "normalizer", "matcher", "issues_engine"}
+    assert all(entry.get("status") == "skipped" for entry in skip_entries)
+
+    cache_path = log_dir / "pipeline_cache.json"
+    assert cache_path.exists()
+    cache_doc = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert set(cache_doc.get("steps", {}).keys()).issuperset({"loader", "normalizer", "matcher", "issues_engine"})
 
 
 
