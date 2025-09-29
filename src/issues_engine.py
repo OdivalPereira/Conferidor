@@ -11,24 +11,127 @@
 #
 # Suporta grid em CSV (.csv) ou JSON Lines (.jsonl). Regras em YAML (.yml/.yaml) ou JSON (.json).
 from __future__ import annotations
-import argparse, csv, json, os, re, sys
+
+import argparse
+import csv
+import json
+import os
+import re
+import sys
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Iterable
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 # ====== Loader de regras (YAML/JSON) ======
-def load_rules(path: str) -> Dict[str, Any]:
-    ext = os.path.splitext(path)[1].lower()
+def load_rules(path: str | os.PathLike[str]) -> Dict[str, Any]:
+    path_str = os.fspath(path)
+    ext = os.path.splitext(path_str)[1].lower()
     if ext in (".json",):
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path_str, "r", encoding="utf-8") as f:
             return json.load(f)
     if ext in (".yml", ".yaml"):
         try:
             import yaml  # type: ignore
         except Exception as e:
             raise RuntimeError("PyYAML não está instalado. Instale com: pip install pyyaml") from e
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path_str, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
     raise RuntimeError(f"Extensão de regras não suportada: {ext}")
+
+
+_SUPPORTED_OPERATORS = {
+    "exists",
+    "eq",
+    "ne",
+    "lt",
+    "lte",
+    "gt",
+    "gte",
+    "abs_gt",
+    "abs_gte",
+    "in",
+    "not_in",
+    "regex",
+    "startswith",
+    "endswith",
+}
+
+
+def _validate_condition_list(conditions: Any, *, prefix: str, errors: List[str]) -> None:
+    if conditions is None:
+        return
+    if not isinstance(conditions, list):
+        errors.append(f"{prefix} deve ser uma lista de condições.")
+        return
+    for idx, cond in enumerate(conditions):
+        if not isinstance(cond, dict):
+            errors.append(f"{prefix}[{idx}] deve ser um objeto com 'field' e 'op'.")
+            continue
+        field = cond.get("field")
+        op = cond.get("op")
+        if not field or not isinstance(field, str):
+            errors.append(f"{prefix}[{idx}].field deve ser uma string não vazia.")
+        if not op or not isinstance(op, str):
+            errors.append(f"{prefix}[{idx}].op deve ser uma string não vazia.")
+        elif op not in _SUPPORTED_OPERATORS:
+            errors.append(f"{prefix}[{idx}].op='{op}' não é suportado pelo issues_engine.")
+
+
+def validate_rules_document(doc: Any, *, source: Optional[str | os.PathLike[str]] = None) -> None:
+    errors: List[str] = []
+    label = f" ({os.fspath(source)})" if source is not None else ""
+
+    if not isinstance(doc, dict):
+        raise ValueError(f"Documento de regras inválido{label}: conteúdo deve ser um objeto mapeável.")
+
+    defaults = doc.get("defaults")
+    if defaults is not None and not isinstance(defaults, dict):
+        errors.append("defaults deve ser um objeto mapeável (dict).")
+
+    rules = doc.get("rules")
+    if not isinstance(rules, list) or not rules:
+        errors.append("A chave 'rules' deve conter uma lista com pelo menos uma regra.")
+    else:
+        for idx, rule in enumerate(rules):
+            if not isinstance(rule, dict):
+                errors.append(f"rules[{idx}] deve ser um objeto (dict).")
+                continue
+
+            rule_id = rule.get("id")
+            if not rule_id or not isinstance(rule_id, str):
+                errors.append(f"rules[{idx}].id deve ser uma string não vazia.")
+
+            emit = rule.get("emit")
+            if not isinstance(emit, dict):
+                errors.append(f"rules[{idx}].emit deve ser um objeto (dict).")
+            else:
+                message = emit.get("message")
+                if message is not None and not isinstance(message, str):
+                    errors.append(f"rules[{idx}].emit.message deve ser string se fornecida.")
+                mark_status = emit.get("mark_status")
+                if mark_status is not None and not isinstance(mark_status, str):
+                    errors.append(f"rules[{idx}].emit.mark_status deve ser string se fornecida.")
+                code = emit.get("code")
+                if code is not None and not isinstance(code, str):
+                    errors.append(f"rules[{idx}].emit.code deve ser string se fornecida.")
+
+            for section_name in ("when", "and", "but"):
+                section = rule.get(section_name)
+                if section is None:
+                    continue
+                if not isinstance(section, dict):
+                    errors.append(f"rules[{idx}].{section_name} deve ser um objeto (dict).")
+                    continue
+                _validate_condition_list(section.get("all"), prefix=f"rules[{idx}].{section_name}.all", errors=errors)
+                _validate_condition_list(section.get("any"), prefix=f"rules[{idx}].{section_name}.any", errors=errors)
+
+    if errors:
+        raise ValueError(f"Regras inválidas{label}: " + "; ".join(errors))
+
+
+def validate_rules_file(path: str | os.PathLike[str]) -> Dict[str, Any]:
+    doc = load_rules(path)
+    validate_rules_document(doc, source=path)
+    return doc
 
 # ====== Loader da grid (CSV/JSONL) ======
 def read_grid(path: str) -> List[Dict[str, Any]]:
@@ -196,7 +299,7 @@ def merge_status(curr: Optional[str], new: Optional[str]) -> Optional[str]:
 
 # ====== Motor principal ======
 def run_issues(grid_path: str, rules_path: str, out_issues: str, out_grid: str) -> Dict[str, Any]:
-    rules_doc = load_rules(rules_path) or {}
+    rules_doc = validate_rules_file(rules_path)
     rules = rules_doc.get("rules") or []
     defaults = rules_doc.get("defaults") or {}
     grid = read_grid(grid_path)
