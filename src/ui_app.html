@@ -18,6 +18,8 @@
     .shadow-soft{box-shadow:0 1px 2px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.04)}
     .table-sticky thead th{position:sticky;top:0;background:#0f172a;color:#fff;z-index:1}
     .table-sticky thead th{font-weight:600}
+    .spinner{width:3rem;height:3rem;border-radius:9999px;border:3px solid #c7d2fe;border-top-color:#4338ca;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg);}}
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800">
@@ -614,7 +616,7 @@ function InspectorPanel({row,onClose,onMark,onReset}){
   );
 }
 
-function Table({columns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect,onManualStatus,onResetStatus,onSortChange}){
+function Table({columns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect,onManualStatus,onResetStatus,onSortChange,loading,emptyMessage,emptyHint}){
   const setSort = useCallback((id)=>{
     let nextSortBy = id;
     let nextSortDir = "desc";
@@ -632,18 +634,24 @@ function Table({columns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDi
       setSortDir(nextSortDir);
     }
   },[onSortChange, setSortBy, setSortDir, sortBy, sortDir]);
+  const tableItems = Array.isArray(items) ? items : [];
+  const hasItems = tableItems.length > 0;
+  const showEmptyState = !loading && !hasItems;
+  const emptyLabel = emptyMessage || "Nenhum registro encontrado.";
+  const emptyDetails = emptyHint || "Ajuste os filtros ou processe novos dados.";
   return (
-    React.createElement("div",{className:"overflow-auto rounded-xl shadow-soft border bg-white"},
-      React.createElement("table",{className:"min-w-[1200px] w-full table-sticky"},
-        React.createElement("thead",null,
-          React.createElement("tr",null,
-            React.createElement("th",{className:"text-left px-3 py-2 w-28"},"Status"),
-            React.createElement("th",{className:"text-left px-3 py-2 w-44"},"Acoes"),
-            columns.map(col=>React.createElement("th",{key:col.id,className:"text-left px-3 py-2 cursor-pointer",onClick:()=>setSort(col.id)}, col.label||col.id))
-          )
-        ),
-        React.createElement("tbody",null,
-          items.map((r,idx)=>{
+    React.createElement("div",{className:"relative min-h-[240px]", "aria-busy": loading ? "true" : "false"},
+      React.createElement("div",{className:"overflow-auto rounded-xl shadow-soft border bg-white h-full"},
+        React.createElement("table",{className:"min-w-[1200px] w-full table-sticky"},
+          React.createElement("thead",null,
+            React.createElement("tr",null,
+              React.createElement("th",{className:"text-left px-3 py-2 w-28"},"Status"),
+              React.createElement("th",{className:"text-left px-3 py-2 w-44"},"Acoes"),
+              columns.map(col=>React.createElement("th",{key:col.id,className:"text-left px-3 py-2 cursor-pointer",onClick:()=>setSort(col.id)}, col.label||col.id))
+            )
+          ),
+          React.createElement("tbody",null,
+          tableItems.map((r,idx)=>{
             const s = (r.status||"").toUpperCase();
             const auto = (r.score ?? 0) >= 70;
             const cls = s==="OK"?"row-ok":(s==="ALERTA"?"row-alerta":(s==="DIVERGENCIA"?"row-div":"row-neutro"));
@@ -671,6 +679,16 @@ function Table({columns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDi
           })
         )
       )
+      ),
+      loading ? React.createElement("div",{className:"absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/80 backdrop-blur-sm text-indigo-700",role:"status","aria-live":"polite"},
+        React.createElement("span",{className:"spinner","aria-hidden":"true"}),
+        React.createElement("p",{className:"text-sm font-semibold"},"Carregando dados..."),
+        React.createElement("p",{className:"text-xs"},"Estamos preparando a grade para exibição.")
+      ) : null,
+      showEmptyState ? React.createElement("div",{className:"pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 bg-white/70 text-slate-600"},
+        React.createElement("p",{className:"text-sm font-semibold"}, emptyLabel),
+        React.createElement("p",{className:"text-xs text-slate-500"}, emptyDetails)
+      ) : null
     )
   );
 }
@@ -718,6 +736,21 @@ function computeToolbarStats(meta){
 function App(){
   const api = useApi(); // ajuste `window.UI_API_BASE` ou use ?api= para apontar para outro host/porta
   const {addToast} = useToast();
+  const showErrorToast = useCallback((title, error)=>{
+    const description = error && error.message ? error.message : (typeof error === "string" ? error : null);
+    addToast({
+      type:"error",
+      title: title || "Erro",
+      description: description || "Ocorreu um erro inesperado."
+    });
+  },[addToast]);
+  const showWarningToast = useCallback((title, description)=>{
+    addToast({
+      type:"warning",
+      title: title || "Aviso",
+      description: description || "Verifique as informações exibidas."
+    });
+  },[addToast]);
   const [schema,setSchema] = useState(null);
   const [meta,setMeta] = useState(null);
   const [items,setItems] = useState([]);
@@ -774,8 +807,11 @@ function App(){
       setSchema(s);
       const m = await api.get("/api/meta");
       setMeta(m);
-    }catch(e){ console.error(e); }
-  },[api]);
+    }catch(e){
+      console.error("Falha ao carregar metadados", e);
+      showErrorToast("Erro ao carregar metadados", e);
+    }
+  },[api, showErrorToast]);
 
   const loadGrid = useCallback(async (nextOffset, nextFilters)=>{
     const hasOverride = typeof nextOffset === "number" && !Number.isNaN(nextOffset);
@@ -800,9 +836,15 @@ function App(){
       const res = await api.get("/api/grid",{params});
       setItems(res.items || []);
       setTotal(res.total_filtered || 0);
-    }catch(e){ setError(String(e)); setItems([]); setTotal(0); }
+    }catch(e){
+      console.error("Falha ao carregar grade", e);
+      setError("Não foi possível carregar os dados da grade. Tente novamente.");
+      setItems([]);
+      setTotal(0);
+      showErrorToast("Erro ao carregar dados", e);
+    }
     finally{ setLoading(false); }
-  },[api, filters, sortBy, sortDir, limit, offset, skipNextAutoLoad]);
+  },[api, filters, sortBy, sortDir, limit, offset, skipNextAutoLoad, showErrorToast]);
 
   useEffect(()=>{ loadMeta(); },[loadMeta]);
   useEffect(()=>{
@@ -892,14 +934,20 @@ function App(){
       const res = await api.post("/api/export/json",{body:{grid:"reconc_grid.csv",out}});
       const link = res.download || res.absolute_out;
       if(link){ window.open(link,"_blank"); }
-    }catch(e){ alert("Falha no export JSON: "+e); }
+    }catch(e){
+      console.error("Falha no export JSON", e);
+      showErrorToast("Erro ao exportar JSON", e);
+    }
   };
   const exportX = async ()=>{
     try{
       const out = "relatorio_conferencia.xlsx";
       const res = await api.post("/api/export/xlsx",{body:{grid:"reconc_grid.csv",sem_fonte:"reconc_sem_fonte.csv",sem_sucessor:"reconc_sem_sucessor.csv",out}});
       if(res.download){ window.open(res.download,"_blank"); }
-    }catch(e){ alert("Falha no export XLSX: "+e); }
+    }catch(e){
+      console.error("Falha no export XLSX", e);
+      showErrorToast("Erro ao exportar XLSX", e);
+    }
   };
   const exportP = async ()=>{
     try{
@@ -907,7 +955,10 @@ function App(){
       const res = await api.post("/api/export/pdf",{body:{grid:"reconc_grid.csv",out,cliente:"Cliente",periodo:"Periodo"}});
       const link = res.download || res.download_html;
       if(link){ window.open(link,"_blank"); }
-    }catch(e){ alert("Falha no export PDF: "+e); }
+    }catch(e){
+      console.error("Falha no export PDF", e);
+      showErrorToast("Erro ao exportar PDF", e);
+    }
   };
 
   const handleCancelJob = useCallback(async ()=>{
@@ -926,11 +977,11 @@ function App(){
     }catch(err){
       console.error("Falha ao solicitar cancelamento do job", err);
       const message = err && err.message ? err.message : String(err);
-      alert("Não foi possível cancelar o processamento: " + message);
+      showErrorToast("Não foi possível cancelar o processamento", message);
     }finally{
       setJobCanceling(false);
     }
-  },[api,currentJobId,jobCanceling]);
+  },[api,currentJobId,jobCanceling,showErrorToast]);
 
   const openUploadModal = ()=>{
     setUploadError(null);
@@ -956,6 +1007,8 @@ function App(){
         }catch(processErr){
           const message = processErr && processErr.message ? processErr.message : String(processErr);
           setUploadError(message);
+          console.error("Falha ao iniciar processamento", processErr);
+          showErrorToast("Erro ao iniciar processamento", message);
           return;
         }
         setCurrentJobId(jobId);
@@ -975,6 +1028,8 @@ function App(){
     }catch(err){
       const message = err && err.message ? err.message : String(err);
       setUploadError(message);
+      console.error("Falha no envio de arquivos", err);
+      showErrorToast("Erro no envio de arquivos", message);
     }finally{
       setUploading(false);
     }
@@ -1012,7 +1067,7 @@ function App(){
       });
     }catch(e){
       console.error("Falha ao salvar override manual", e);
-      alert("Falha ao salvar ajuste manual: " + e);
+      showErrorToast("Falha ao salvar ajuste manual", e);
       return;
     }
     let updatedRow = null;
@@ -1047,7 +1102,7 @@ function App(){
       await api.del("/api/manual-status",{params:{row_id: rowKey}});
     }catch(e){
       console.error("Falha ao remover override manual", e);
-      alert("Falha ao remover ajuste manual: " + e);
+      showErrorToast("Falha ao remover ajuste manual", e);
       return;
     }
     let updatedRow = null;
@@ -1103,11 +1158,7 @@ function App(){
           if(!cancelled){
             const lastLog = Array.isArray(res?.logs) && res.logs.length ? res.logs[res.logs.length-1] : null;
             const message = res?.message || lastLog?.message || lastLog?.label;
-            if(message){
-              alert(`Processamento falhou: ${message}`);
-            }else{
-              alert("Processamento falhou.");
-            }
+            showErrorToast("Processamento falhou", message || "O processamento foi interrompido.");
           }
         }else if(normalized === "cancelled"){
           if(timerId){ clearInterval(timerId); timerId = null; }
@@ -1115,7 +1166,7 @@ function App(){
           setJobStatus(null);
           setJobCanceling(false);
           if(!cancelled){
-            alert("Processamento cancelado.");
+            showWarningToast("Processamento cancelado", "O processamento foi interrompido antes da conclusão.");
           }
         }
       }catch(pollErr){
@@ -1128,9 +1179,15 @@ function App(){
       cancelled = true;
       if(timerId){ clearInterval(timerId); }
     };
-  },[api, currentJobId, loadGrid, loadMeta]);
+  },[api, currentJobId, loadGrid, loadMeta, showErrorToast, showWarningToast]);
 
   const toolbarStats = useMemo(()=> computeToolbarStats(meta),[meta]);
+  const hasActiveFilters = useMemo(()=>{
+    const current = filters || {};
+    return Object.values(current).some(value=> Boolean(value));
+  },[filters]);
+  const emptyStateMessage = hasActiveFilters ? "Nenhum registro encontrado para os filtros selecionados." : "Nenhum dado disponível no momento.";
+  const emptyStateHint = hasActiveFilters ? "Ajuste os filtros ou limpe os campos para visualizar outros resultados." : "Envie novos arquivos para gerar a grade de conferência.";
   
   return (
 
@@ -1170,9 +1227,23 @@ function App(){
         loading,
         disabled: jobRunning
       }),
-      error && React.createElement("div",{className:"p-3 rounded bg-rose-100 text-rose-800 mb-3"}, String(error)),
+      error && React.createElement("div",{className:"p-3 rounded bg-rose-100 text-rose-800 mb-3",role:"alert"}, String(error)),
       React.createElement(Table,{
-        columns: tableColumns,items,resolveRowId,selectedRowId,sortBy,setSortBy,sortDir,setSortDir,onInspect: handleInspect,onManualStatus: handleManualStatus,onResetStatus: handleResetStatus,onSortChange: handleSortChange
+        columns: tableColumns,
+        items,
+        resolveRowId,
+        selectedRowId,
+        sortBy,
+        setSortBy,
+        sortDir,
+        setSortDir,
+        onInspect: handleInspect,
+        onManualStatus: handleManualStatus,
+        onResetStatus: handleResetStatus,
+        onSortChange: handleSortChange,
+        loading,
+        emptyMessage: emptyStateMessage,
+        emptyHint: emptyStateHint
       }),
       React.createElement(InspectorPanel,{
         row: selectedRow,
